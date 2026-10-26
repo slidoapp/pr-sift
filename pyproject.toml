@@ -2,9 +2,12 @@
 name = "ai-reviewer"
 version = "0.1.0"
 description = "Review GitHub pull requests by what matters: architecture, interfaces, behavior."
-readme = "docs/design.md"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+
+[project.scripts]
+reviewer = "reviewer.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

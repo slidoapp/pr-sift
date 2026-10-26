@@ -1,4 +1,4 @@
-from reviewer.graph import build_graph, default_depth, diff_graphs, graph_signals, to_mermaid
+from reviewer.graph import build_graph, diff_graphs, graph_signals, to_mermaid
 
 BASE = {
     "src/app/__init__.py": "",
@@ -29,10 +29,12 @@ def test_from_package_import_name_points_at_package():
     assert set(graph.edges) == {("m", "p")}
 
 
-def test_default_depth():
-    assert default_depth(["app.a.x", "app.b.y", "tests.t"]) == 3
-    many = [f"app.m{i}.sub" for i in range(30)]
-    assert default_depth(many) == 1
+def test_default_depth_is_the_deepest_that_fits():
+    old = build_graph({f"app/m{i}/sub.py": "" for i in range(30)} | {"app/core.py": ""})
+    new = build_graph({f"app/m{i}/sub.py": "" for i in range(30)} | {"app/core.py": "from app.m1 import sub\n"})
+    assert diff_graphs(old, new, {"app.core"}).depth == 3
+    everything = {f"app.m{i}.sub" for i in range(30)}
+    assert diff_graphs(old, new, everything).depth == 1
 
 
 def head():
@@ -66,3 +68,20 @@ def test_to_mermaid():
     assert '  n2["app.retry"]:::added' in text
     assert "  n1 -.-> n0" in text
     assert "  linkStyle 1 stroke:#1a7f37,stroke-width:2px" in text
+
+
+def test_neighbors_are_dropped_when_they_would_crowd_the_diagram():
+    users = {f"u{i}.py": "import hub\n" for i in range(20)}
+    old = build_graph(users | {"hub.py": "", "dep.py": ""})
+    new = build_graph(users | {"hub.py": "import dep\n", "dep.py": ""})
+    diff = diff_graphs(old, new, {"hub"})
+    assert diff.nodes == {"dep": "unchanged", "hub": "changed"}
+    assert diff.edges == {("hub", "dep"): "added"}
+
+
+def test_unchanged_edges_between_context_nodes_are_not_drawn():
+    files = {"a.py": "import b\nimport c\n", "b.py": "import c\n", "c.py": ""}
+    changed = dict(files, **{"a.py": "import b\nimport c\nX = 1\n"})
+    diff = diff_graphs(build_graph(files), build_graph(changed), {"a"})
+    assert set(diff.nodes) == {"a", "b", "c"}
+    assert set(diff.edges) == {("a", "b"), ("a", "c")}

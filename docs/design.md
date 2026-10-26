@@ -132,10 +132,13 @@ Extracted at base and head with `ast`, then diffed:
 
 - Build the import graph at base and head with `ast`, limited to
   modules inside the repo. Resolve relative imports.
-- Collapse to package level by default. Packages can be expanded to
-  module level in the UI.
+- Collapse to the deepest package level whose diagram has at most 25
+  nodes. Packages can be expanded to module level in the UI.
 - Diff the graphs: added and removed nodes and edges, plus packages
-  that contain changed units.
+  that contain changed units. Direct neighbors of changed packages are
+  added for context only while the diagram stays at 12 nodes or fewer,
+  and only edges touching the change are drawn, so hub modules don't
+  pull in the whole repo.
 - Render as Mermaid: new edges green, removed red (dashed), changed
   packages highlighted.
 - New third-party imports are listed next to the diagram.
@@ -155,8 +158,9 @@ Done by Claude inside the skill, not by the CLI.
 architecture and interface diffs, and the non-noise units with **no
 cached ranking**. Each unit includes its diff and signals.
 
-**Output** (`ranking.json`), validated against a JSON schema by
-`reviewer ingest`:
+**Output** (`ranking.json`), validated by `reviewer ingest`
+(`reviewer/ranking.py`), which also rejects rankings that leave units
+unranked:
 
 ```json
 {
@@ -210,14 +214,18 @@ Each unit can also be flagged (⚑) to come back to.
 
 ## Storage
 
-SQLite (stdlib `sqlite3`) at `~/.local/share/reviewer/reviewer.db`.
-Chosen over LevelDB because it ships with Python, needs no native
-library, and the data is relational and worth querying.
+SQLite (stdlib `sqlite3`) at `~/.local/share/reviewer/reviewer.db`
+(override with `REVIEWER_DATA_DIR`). Chosen over LevelDB because it
+ships with Python, needs no native library, and the data is relational
+and worth querying.
 
 ```sql
-prs        (id, repo, number, title, base_sha, head_sha, analyzed_at)
-units      (id, pr_id, path, qualname, kind, status, old_body, new_body,
-            fingerprint, noise, signals_json)
+prs        (id, repo, number, title, url, base_sha, head_sha, merge_base,
+            analyzed_at, analysis)   -- analysis: JSON of architecture,
+                                     -- interfaces and counts
+units      (id, pr_id, path, old_path, qualname, old_qualname, kind,
+            status, old_body, new_body, old_lines, new_lines,
+            fingerprint, noise, signals)
 rankings   (fingerprint PRIMARY KEY, tier, reason, summary, model,
             created_at)
 reviews    (id, pr_id, qualname, fingerprint, reviewed_body, status,
@@ -233,8 +241,9 @@ pr_summary (pr_id, head_sha, overview, architecture_summary,
 `comments` persist.
 
 Repos are fetched into cached bare clones under `~/.cache/reviewer/`
-(`git fetch origin pull/<n>/head`), so your working checkout is never
-touched.
+(override with `REVIEWER_CACHE_DIR`; `git fetch origin
+pull/<n>/head`), so your working checkout is never touched. The PR is
+diffed from the merge base of its base and head, as GitHub does.
 
 ## Report UI
 
@@ -347,8 +356,8 @@ host configuration.
 2. Run `reviewer analyze <pr> --out <scratch>/analysis.json`.
 3. Read the analysis. Rank every unit in it and write the overview and
    component summaries, following the tier definitions above.
-4. Write `ranking.json` and run `reviewer ingest`. On a schema error,
-   fix and retry.
+4. Write `ranking.json` and run `reviewer ingest`. On a validation
+   error, fix and retry.
 5. Run `reviewer serve <pr>` in the background and tell the user the
    URL, plus a short text summary: tiers and counts, new since last
    review.
@@ -360,31 +369,31 @@ For very large PRs, the skill ranks units in batches by package.
 ```
 reviewer/
   cli.py            # analyze | ingest | serve | status
-  github.py         # gh wrappers: PR metadata, fetch refs, post review
+  github.py         # gh wrappers: PR metadata, cloning, post review
   repo.py           # cached bare clones, reading files at a SHA
   units.py          # ast → symbol units, normalization, fingerprints
   noise.py          # noise filtering rules
   interfaces.py     # signatures, models, routes, CLI, env vars, deps
   graph.py          # import graph, graph diff, Mermaid rendering
+  analysis.py       # runs the above on a PR, builds the model's input
+  ranking.py        # validates the model's ranking
   store.py          # SQLite schema and queries
   server.py         # stdlib HTTP server and JSON API
-  schema/ranking.schema.json
   web/              # index.html, app.js, styles.css, vendor/
 skills/review-pr/SKILL.md
 tests/
-  fixtures/         # small before/after repos per scenario
 docs/design.md
 ```
 
 Tooling: Python ≥ 3.12, `uv`, `pytest`. Runtime needs `gh` and `git`
-on PATH. JSON schema validation is the only candidate third-party
-runtime dependency (`jsonschema`). Everything else is stdlib.
+on PATH. No third-party runtime dependencies.
 
 ## Testing
 
-Fixture-driven. Each scenario is a small base/head pair with the
-expected units, noise reasons, structural signals and fingerprint
-behavior:
+Each scenario is a small base/head pair, written inline in the tests,
+with the expected units, noise reasons, structural signals and
+fingerprint behavior. Pipeline tests build a real temporary git
+repository and stub out `gh`:
 
 - docstring-only, comment-only and formatting-only changes are hidden
 - local rename hidden; public parameter rename flagged as interface
