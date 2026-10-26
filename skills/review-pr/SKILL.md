@@ -136,7 +136,8 @@ this time.
 Blocks:
 
 - `text`: prose. Paragraphs are separated by blank lines; `### ` starts
-  a heading, `- ` a list item; `**bold**` and backticks work.
+  a heading, `- ` a list item; `**bold**`, backticks and
+  `[links](https://…)` work.
 - `code`: a unit's code, by `qualname` from `outline`. Without `lines`
   the report shows the unit's key lines (its skeleton and highlights);
   with `lines: [first, last]` (file lines) only that part, for a long

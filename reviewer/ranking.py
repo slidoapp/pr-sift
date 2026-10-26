@@ -179,5 +179,5 @@ def to_lines(entries: list[dict], old_lines: list[int], new_lines: list[int]) ->
             continue
         lines = new_lines if entry["side"] == "new" else old_lines
         if 0 <= entry["offset"] < len(lines):
-            shown.append({k: v for k, v in entry.items() if k not in ("side", "offset")} | {"line": lines[entry["offset"]]})
+            shown.append({k: v for k, v in entry.items() if k != "offset"} | {"line": lines[entry["offset"]]})
     return shown

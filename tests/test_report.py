@@ -301,4 +301,4 @@ def test_highlights_follow_their_unit_when_it_moves(tmp_path, monkeypatch):
     moved = {"pkg/mod.py": "X = 1\n\n\n" + FIRST["pkg/mod.py"]}
     pr_id = store.save_analysis("github.com/o/r", 1, {"title": "T"}, classify(diff_files(BASE, moved)), {})
     view = next(u for u in page_data(store, pr_id)["units"] if u["qualname"] == "pkg.mod.f")
-    assert view["highlights"] == [{"note": "n", "line": line + 3}]
+    assert view["highlights"] == [{"note": "n", "side": "new", "line": line + 3}]

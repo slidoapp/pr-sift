@@ -316,8 +316,13 @@ function storyText(text) {
   return el("div", { class: "story-text" }, nodes);
 }
 
+// **bold**, `code` and [links](https://...) in a line of walkthrough text.
 function inline(text) {
-  return text.split(/\*\*([^*]+)\*\*/).map((part, i) => (i % 2 ? el("strong", {}, rich(part)) : rich(part))).flat();
+  return text.split(/(\[[^\]]+\]\(https?:\/\/[^\s)]+\))/).flatMap((chunk) => {
+    const link = chunk.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    if (link) return [el("a", { href: link[2], target: "_blank", rel: "noopener" }, rich(link[1]))];
+    return chunk.split(/\*\*([^*]+)\*\*/).flatMap((part, i) => (i % 2 ? [el("strong", {}, rich(part))] : rich(part)));
+  });
 }
 
 function unitLink(qualname, label = qualname) {
@@ -818,7 +823,9 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
     tbody = el("tbody");
   };
   const kinds = { " ": "ctx", "-": "del", "+": "add" };
-  const notes = new Map(highlights.map((h) => [h.line, h.note]));
+  // Highlights by side and line: a removed and an added line can share a number.
+  const notes = new Map(highlights.map((h) => [`${h.side || "new"}:${h.line}`, h.note]));
+  const noteKey = (row) => (row[0] === "-" ? `old:${row[1]}` : `new:${row[2]}`);
   const foldAt = new Map(folds.filter((f) => !ui.unfolded.has(`${key}:${f.start}`)).map((f) => [f.start, f]));
   const lineOf = (row) => (row[0] === "-" ? row[1] : row[2]);
   // Titled blocks Claude split a long unit into; a title shows before the
@@ -834,7 +841,7 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
   const emit = (row) => {
     title(row);
     tbody.append(diffRow(row, kinds, language, key, notes));
-    const note = notes.get(lineOf(row));
+    const note = notes.get(noteKey(row));
     if (note) tbody.append(el("tr", { class: "hl-note" }, el("td", { colspan: "3" }, "⚠ ", rich(note))));
   };
   const renderRange = (from, to, collapse = true) => {
@@ -852,7 +859,7 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
         let end = i;
         while (end < to && rows[end][0] === " " && !foldAt.has(rows[end][2])) end++;
         const gapKey = `${key}:${i}`;
-        const highlighted = rows.slice(i, end).some((row) => notes.has(lineOf(row)) || titles.has(lineOf(row)));
+        const highlighted = rows.slice(i, end).some((row) => notes.has(noteKey(row)) || titles.has(lineOf(row)));
         if (collapse && end - i >= GAP_MIN && !ui.gaps.has(gapKey) && !highlighted) {
           const keepStart = i === from ? 0 : GAP_KEEP;
           const keepEnd = end === to || foldAt.has(rows[end]?.[2]) ? 0 : GAP_KEEP;
@@ -885,7 +892,7 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
   // Code with a skeleton needs no context around highlights; other files do.
   const context = keyNew.size || keyOld.size ? 0 : KEY_CONTEXT;
   rows.forEach((row, i) => {
-    if (notes.has(lineOf(row))) for (let k = i - context; k <= i + context; k++) shown.add(k);
+    if (notes.has(noteKey(row))) for (let k = i - context; k <= i + context; k++) shown.add(k);
   });
   for (const fold of folds) {
     if (!highlights.some((h) => h.line >= fold.start && h.line <= fold.end)) continue;
@@ -919,7 +926,8 @@ function diffRow(row, kinds, language, key, notes) {
   const line = kind === "-" ? oldLine : newLine;
   const code = el("code");
   highlight(code, text, language);
-  return el("tr", { class: `${kinds[kind]} ${notes.has(line) ? "hl" : ""}`, id: line != null ? `line-${key}-${line}` : null },
+  const noted = notes.has(kind === "-" ? `old:${oldLine}` : `new:${newLine}`);
+  return el("tr", { class: `${kinds[kind]} ${noted ? "hl" : ""}`, id: line != null ? `line-${key}-${line}` : null },
     el("td", { class: "ln", text: oldLine ?? "" }),
     el("td", { class: "ln", text: newLine ?? "" }),
     el("td", { class: "code" }, el("span", { class: "sign", text: kind === " " ? "" : kind === "-" ? "−" : "+" }), code),
@@ -932,10 +940,10 @@ function foldView(fold, key, notes) {
   // The highlighted line inside a row, if any.
   const rowLine = (row) => {
     if (row.start == null) return null;
-    for (let line = row.start; line <= row.end; line++) if (notes.has(line)) return line;
+    for (let line = row.start; line <= row.end; line++) if (notes.has(`new:${line}`)) return line;
     return null;
   };
-  const rowNote = (row) => notes.get(rowLine(row)) ?? null;
+  const rowNote = (row) => notes.get(`new:${rowLine(row)}`) ?? null;
   const head = el("div", { class: "fold-head" },
     el("span", { class: "fold-icon", text: "▤" }),
     fold.title && el("code", { class: "inline", text: fold.title }),
