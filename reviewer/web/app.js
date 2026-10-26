@@ -685,7 +685,7 @@ function unitBody(u) {
     ),
   );
   if (view === "since") body.append(renderDiff(u.since_review, u.language, u.qualname, [], u.highlights));
-  else body.append(renderDiff(u.diff, u.language, u.qualname, u.folds, u.highlights, view === "key" ? u.key_lines : null));
+  else body.append(renderDiff(u.diff, u.language, u.qualname, u.folds, u.highlights, view === "key" ? u.key_lines : null, u.sections));
   return body;
 }
 
@@ -726,7 +726,7 @@ function highlight(code, text, language) {
 // keyLines ({new, old} skeleton lines), only those, highlighted lines
 // with KEY_CONTEXT lines around them, and folds holding a highlight are
 // shown; the rest collapses into bars.
-function renderDiff(rows, language, key, folds = [], highlights = [], keyLines = null) {
+function renderDiff(rows, language, key, folds = [], highlights = [], keyLines = null, sections = []) {
   const wrap = el("div", { class: "diff-wrap" });
   let tbody = el("tbody");
   const flush = () => {
@@ -737,16 +737,28 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
   const notes = new Map(highlights.map((h) => [h.line, h.note]));
   const foldAt = new Map(folds.filter((f) => !ui.unfolded.has(`${key}:${f.start}`)).map((f) => [f.start, f]));
   const lineOf = (row) => (row[0] === "-" ? row[1] : row[2]);
+  // Titled blocks Claude split a long unit into; a title shows before the
+  // block's first line, and that line always shows.
+  const titles = new Map(sections.map((s, i) => [s.line, `${i + 1}. ${s.title}`]));
+  const title = (row) => {
+    const text = titles.get(lineOf(row));
+    if (!text) return;
+    titles.delete(lineOf(row));
+    flush();
+    wrap.append(el("div", { class: "diff-section" }, rich(text)));
+  };
   const emit = (row) => {
+    title(row);
     tbody.append(diffRow(row, kinds, language, key, notes));
     const note = notes.get(lineOf(row));
     if (note) tbody.append(el("tr", { class: "hl-note" }, el("td", { colspan: "3" }, "⚠ ", rich(note))));
   };
-  const renderRange = (from, to) => {
+  const renderRange = (from, to, collapse = true) => {
     let i = from;
     while (i < to) {
       const fold = rows[i][2] !== null && foldAt.get(rows[i][2]);
       if (fold) {
+        title(rows[i]);
         flush();
         wrap.append(foldView(fold, key, notes));
         while (i < to && rows[i][2] !== null && rows[i][2] <= fold.end) i++;
@@ -756,8 +768,8 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
         let end = i;
         while (end < to && rows[end][0] === " " && !foldAt.has(rows[end][2])) end++;
         const gapKey = `${key}:${i}`;
-        const highlighted = rows.slice(i, end).some((row) => notes.has(lineOf(row)));
-        if (end - i >= GAP_MIN && !ui.gaps.has(gapKey) && !highlighted) {
+        const highlighted = rows.slice(i, end).some((row) => notes.has(lineOf(row)) || titles.has(lineOf(row)));
+        if (collapse && end - i >= GAP_MIN && !ui.gaps.has(gapKey) && !highlighted) {
           const keepStart = i === from ? 0 : GAP_KEEP;
           const keepEnd = end === to || foldAt.has(rows[end]?.[2]) ? 0 : GAP_KEEP;
           for (let k = i; k < i + keepStart; k++) emit(rows[k]);
@@ -784,6 +796,7 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
   const shown = new Set();
   rows.forEach((row, i) => {
     if (row[0] === "-" ? keyOld.has(row[1]) : keyNew.has(row[2])) shown.add(i);
+    if (titles.has(lineOf(row))) shown.add(i);
   });
   // Code with a skeleton needs no context around highlights; other files do.
   const context = keyNew.size || keyOld.size ? 0 : KEY_CONTEXT;
@@ -801,7 +814,8 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
     while (end < rows.length && shown.has(end) === visible) end++;
     const gapKey = `${key}:key${i}`;
     if (visible || ui.gaps.has(gapKey)) {
-      renderRange(i, end);
+      // Key lines were picked on purpose: don't collapse unchanged ones.
+      renderRange(i, end, !visible);
     } else {
       const added = rows.slice(i, end).filter((r) => r[0] === "+").length;
       const removed = rows.slice(i, end).filter((r) => r[0] === "-").length;

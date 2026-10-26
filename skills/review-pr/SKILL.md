@@ -71,7 +71,8 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
          "summary": "what changes, one line",
          "description": "what the symbol does, one line, or null",
          "attention": "read | skim | hide",
-         "highlights": [{"line": 312, "note": "why this line deserves a look"}]
+         "highlights": [{"line": 312, "note": "why this line deserves a look"}],
+         "sections": [{"line": 300, "title": "Load the segments and their metadata"}]
        }
      ]
    }
@@ -178,6 +179,17 @@ order dependencies. Use the file line from the diff's hunk headers.
 Most units need none; don't highlight lines just to have some. Notes
 say what to check, in at most about 100 characters: "max int32 as a
 fake id written to the production index".
+
+**`sections`.** A long unit is easier to review as a few titled
+blocks. For any `read` unit longer than about 30 lines, or with several
+distinct steps, split it into 2–6 sections at natural boundaries (blank
+lines, or the top-level statements of the function body) and give each
+a title like a short code comment: "Place segments on the timeline,
+pushing overlaps back". `line` is the file line of the block's first
+statement, from the diff; the report shows the title before it and
+always shows that line. Titles say what the block does, in at most
+about 60 characters, with code in backticks. Short units need no
+sections.
 
 ## Writing summaries
 

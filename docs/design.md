@@ -205,7 +205,15 @@ click, and a switch shows the full diff:
 - changed statements that write a name a decision reads (an `if` or
   `while` condition, a `return`, `raise` or `assert`), such as the
   appends to a list that is checked later,
-- highlighted lines, and folds that contain one.
+- highlighted lines, and folds that contain one,
+- of a long statement, its first line and, if only part of it changed,
+  the changed lines; and if none of a unit's changed lines would show,
+  all of them.
+
+**Sections** (Claude). A long `read` unit is split into 2–6 titled
+blocks at natural boundaries. The report shows each title before its
+block's first line, which always shows, in both the key-lines and the
+full view.
 
 **Progress** counts changed lines as reviewed, skim (skim units and
 folded lines), hidden and left. The percentage is of the lines left to
@@ -238,7 +246,8 @@ unranked:
       "summary": "what changes in behavior, one line",
       "description": "what the symbol does, one line, or null",
       "attention": "read | skim | hide",
-      "highlights": [{"line": 312, "note": "max int32 as a fake id in the production index"}]
+      "highlights": [{"line": 312, "note": "max int32 as a fake id in the production index"}],
+      "sections": [{"line": 300, "title": "Load the segments and their metadata"}]
     }
   ]
 }

@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS rankings (
     description TEXT,                -- what the symbol does, when its docstring doesn't say
     attention TEXT,                  -- read | skim; NULL means read
     highlights TEXT,                 -- JSON list of {line, note}
+    sections TEXT,                   -- JSON list of {line, title}
     model TEXT,
     created_at TEXT NOT NULL
 );
@@ -109,7 +110,7 @@ class Store:
         """Add columns that databases created by earlier versions lack."""
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(rankings)")}
         with self.conn:
-            for column in ("description", "attention", "highlights"):
+            for column in ("description", "attention", "highlights", "sections"):
                 if column not in columns:
                     self.conn.execute(f"ALTER TABLE rankings ADD COLUMN {column} TEXT")
 
@@ -183,13 +184,14 @@ class Store:
             self.conn.executemany(
                 """
                 INSERT OR REPLACE INTO rankings
-                    (fingerprint, tier, reason, summary, description, attention, highlights, model, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (fingerprint, tier, reason, summary, description, attention, highlights, sections, model, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
                         r["fingerprint"], r["tier"], r["reason"], r["summary"], r.get("description"),
-                        r.get("attention") or "read", json.dumps(r.get("highlights") or []), model, now(),
+                        r.get("attention") or "read", json.dumps(r.get("highlights") or []),
+                        json.dumps(r.get("sections") or []), model, now(),
                     )
                     for r in rankings
                 ],

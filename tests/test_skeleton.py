@@ -102,3 +102,36 @@ def test_assignments_feeding_a_return_are_kept():
     assert [text[n - 1].strip() for n in kept(source)] == [
         "def f(items):", "total = 0", "for item in items:", "total += item", "return total",
     ]
+
+
+def test_long_statements_show_their_changed_lines():
+    source = "def f():\n    call(\n        a=1,\n        b=2,\n        c=3,\n        d=4,\n        e=5,\n    )\n"
+    assert kept(source, changed={5}) == [1, 2, 5]
+
+
+def test_only_touched_nested_blocks_and_clauses_show():
+    source = """\
+async def run(
+    self,
+    a,
+    b,
+):
+    try:
+        async def process(x):
+            return x
+        result = Result(
+            a=1,
+            b=2,
+            c=3,
+            d=4,
+            e=5,
+            f=6,
+        )
+    finally:
+        await close()
+"""
+    text = source.splitlines()
+    changed = {12}  # c=3
+    assert [text[n - 1].strip() for n in kept(source, changed=changed)] == [
+        "async def run(", "try:", "result = Result(", "c=3,",
+    ]

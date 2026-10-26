@@ -70,7 +70,7 @@ def extract_interfaces(path: str, source: str) -> list[Item]:
         return _pyproject(path, source)
     if re.fullmatch(r"requirements.*\.txt", name):
         return _requirements(path, source)
-    if not path.endswith(".py"):
+    if not path.endswith(".py") or is_test_path(path):
         return []
     items = []
     if "migrations" in path.split("/") or "/alembic/versions/" in f"/{path}":
@@ -81,6 +81,17 @@ def extract_interfaces(path: str, source: str) -> list[Item]:
         if symbol.tree is not None:
             items += _symbol_items(symbol, path, exported)
     return items
+
+
+def is_test_path(path: str) -> bool:
+    """Whether a file holds tests, which callers don't depend on."""
+    name = posixpath.basename(path)
+    return (
+        "tests" in path.split("/")[:-1]
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name == "conftest.py"
+    )
 
 
 def diff_interfaces(old_files: Mapping[str, str], new_files: Mapping[str, str]) -> list[InterfaceChange]:

@@ -60,6 +60,7 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
     old_lines, new_lines = json.loads(unit["old_lines"]), json.loads(unit["new_lines"])
     diff = diff_rows(unit["old_body"], unit["new_body"], old_lines, new_lines)
     highlights = json.loads(ranking["highlights"]) if ranking and ranking["highlights"] else []
+    sections = json.loads(ranking["sections"]) if ranking and ranking["sections"] else []
     review = reviewed.get(qualname) or reviewed.get(unit["old_qualname"])
     if unit["fingerprint"] in reviewed_fingerprints:
         state = "seen"
@@ -84,6 +85,7 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
         "description": ranking["description"] if ranking else None,
         "attention": attention(unit, ranking, highlights),
         "highlights": highlights,
+        "sections": sorted(sections, key=lambda s: s["line"]),
         "folds": shown_folds(find_folds(unit["new_body"], new_lines, unit["path"]), diff),
         "key_lines": key_lines(unit, old_lines, new_lines, diff),
         "docstring": doc_line(unit["new_body"] or unit["old_body"]) if unit["kind"] != "file" else None,
@@ -132,8 +134,12 @@ def key_lines(unit, old_lines: list[int], new_lines: list[int], diff: list[list]
     added = {row[2] for row in diff if row[0] == "+"}
     removed = {row[1] for row in diff if row[0] == "-"}
     new = skeleton_lines(unit["new_body"], new_lines, added, top_level) if unit["new_body"] else set()
-    old = skeleton_lines(unit["old_body"], old_lines, removed, top_level) if unit["old_body"] else set()
-    return {"new": sorted(new), "old": sorted(old & removed)}
+    old = skeleton_lines(unit["old_body"], old_lines, removed, top_level) & removed if unit["old_body"] else set()
+    # Never hide every change: then the changes themselves are the key lines.
+    if (added or removed) and not (new & added or old):
+        new |= added
+        old = removed
+    return {"new": sorted(new), "old": sorted(old)}
 
 
 def doc_line(body: str) -> str | None:

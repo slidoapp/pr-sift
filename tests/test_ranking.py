@@ -73,3 +73,15 @@ def test_attention_and_highlights():
         "units[0].highlights[2] must have a non-empty note",
     ]
     assert validate(ranking(units=[unit | {"highlights": {}}]), {"a"}, {"a"}, lines) == ["units[0]: highlights must be a list"]
+
+
+def test_sections():
+    unit = {"fingerprint": "a", "tier": "behavior", "reason": "r", "summary": "s"}
+    lines = {"a": {10, 11, 12}}
+    ok = unit | {"sections": [{"line": 10, "title": "Load"}, {"line": 12, "title": "Write"}]}
+    assert validate(ranking(units=[ok]), {"a"}, {"a"}, lines) == []
+    bad = unit | {"sections": [{"line": 99, "title": "x"}, {"line": 10, "title": " "}]}
+    assert validate(ranking(units=[bad]), {"a"}, {"a"}, lines) == [
+        "units[0].sections[0]: line 99 is not in the unit's diff",
+        "units[0].sections[1] must have a non-empty title",
+    ]

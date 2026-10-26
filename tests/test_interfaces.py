@@ -236,3 +236,10 @@ def test_model_field_comments():
     )
     docs = {c.name: c.doc for c in diff_interfaces({}, {"m.py": source}) if c.category == "model-field"}
     assert docs == {"m.Case.path": "What to call, relative to the base URL", "m.Case.timeout": "seconds", "m.Case.name": None}
+
+
+def test_tests_are_not_interfaces():
+    source = "def test_it():\n    assert os.environ['X']\n"
+    for path in ("tests/unit/test_a.py", "pkg/test_a.py", "pkg/a_test.py", "tests/conftest.py"):
+        assert extract_interfaces(path, source) == []
+    assert extract_interfaces("pkg/testing.py", source) != []

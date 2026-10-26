@@ -62,15 +62,34 @@ def skeleton_lines(body: str, lines: list[int], changed: set[int], top_level: bo
                 keep.add(line)
 
     def keep_statement(node):
-        end = node.end_lineno if node.end_lineno - node.lineno < MAX_STATEMENT_LINES else node.lineno
-        add(node.lineno, end)
+        if node.end_lineno - node.lineno < MAX_STATEMENT_LINES:
+            add(node.lineno, node.end_lineno)
+            return
+        # A long statement shows its first line, and, when only part of it
+        # changed (an edited argument of a long call), the changed lines.
+        add(node.lineno, node.lineno)
+        span = range(node.lineno, node.end_lineno + 1)
+        edited = [n for n in span if file_line(n) in changed]
+        if len(edited) < len(span):
+            for n in edited:
+                add(n, n)
+
+    def header(start, end):
+        # An unchanged header longer than two lines shows its first line.
+        if end - start >= 2 and not any(file_line(n) in changed for n in range(start, end + 1)):
+            end = start
+        add(start, end)
 
     def statement(node, depth):
         blocks = _blocks(node)
         if blocks:
-            if touched(node) or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                for start, end in _headers(node, text):
-                    add(start, end)
+            # The unit's own definition always shows; nested blocks only
+            # when they contain changes.
+            unit_root = depth == 0 and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            if touched(node) or unit_root:
+                for start, end, block in _headers(node, text):
+                    if block is None or any(touched(child) for child in block):
+                        header(start, end)
                 if isinstance(node, (ast.If, ast.While)):
                     decided.update(_names(node.test))
             for block in blocks:
@@ -124,16 +143,17 @@ def _blocks(node):
 
 
 def _headers(node, text):
-    """(start, end) body-line ranges of a compound statement's header
-    lines: the statement's own, and those of its else, except, finally
-    and case clauses."""
+    """(start, end, block) for a compound statement's header lines: its
+    own (block None: it always shows with the statement), and those of
+    its else, except, finally and case clauses with the block each one
+    introduces."""
     start = min([d.lineno for d in getattr(node, "decorator_list", [])] + [node.lineno])
     first_body = node.body[0]
-    headers = [(start, _header_end(node.lineno, first_body, text))]
+    headers = [(start, _header_end(node.lineno, first_body, text), None)]
     for handler in getattr(node, "handlers", []):
-        headers.append((handler.lineno, _header_end(handler.lineno, handler.body[0], text)))
+        headers.append((handler.lineno, _header_end(handler.lineno, handler.body[0], text), handler.body))
     for case in getattr(node, "cases", []):
-        headers.append((case.pattern.lineno, _header_end(case.pattern.lineno, case.body[0], text)))
+        headers.append((case.pattern.lineno, _header_end(case.pattern.lineno, case.body[0], text), case.body))
     for name, word in (("orelse", "else"), ("finalbody", "finally")):
         block = getattr(node, name, None)
         if not block or not isinstance(block[0], ast.stmt):
@@ -142,7 +162,7 @@ def _headers(node, text):
             continue  # an elif is a nested If with its own header
         for n in range(block[0].lineno - 1, node.lineno, -1):
             if text[n - 1].strip().startswith(word):
-                headers.append((n, n))
+                headers.append((n, n, block))
                 break
     return headers
 

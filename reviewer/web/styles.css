@@ -572,3 +572,12 @@ table.diff tr.flash .code, .fold-table tr.flash td { background: var(--hl-bg); t
 @media (prefers-color-scheme: dark) { .compact-highlights .callout-line { color: #f2c94c; } }
 table.diff tr.key-gap td { padding: 0 8px 0 70px; font-size: 11.5px; line-height: 16px; background: var(--surface-2); color: var(--faint); }
 table.diff tr.key-gap:hover td { color: var(--accent); }
+
+.diff-section {
+  padding: 7px 12px 5px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font: 600 13px/1.4 var(--sans);
+  color: var(--text);
+}
+.diff-wrap > .diff-section:first-child { border-top: 0; }

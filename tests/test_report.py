@@ -216,3 +216,11 @@ def test_units_carry_attention_and_highlights():
     assert (views["pkg.mod.f"]["attention"], views["pkg.mod.f"]["highlights"]) == ("read", [{"line": 2, "note": "n"}])
     assert (views["pkg.mod.g"]["attention"], views["pkg.mod.g"]["highlights"]) == ("hide", [])
     assert views["pkg.mod._h"]["attention"] == "hidden"
+
+
+def test_key_lines_never_hide_every_change():
+    from reviewer.report import key_lines
+
+    unit_row = {"path": "m.py", "kind": "function", "old_body": "def f():\n    x = 1\n", "new_body": "def f():\n    x = 2\n"}
+    diff = [[" ", 1, 1, "def f():"], ["-", 2, None, "    x = 1"], ["+", None, 2, "    x = 2"]]
+    assert key_lines(unit_row, [1, 2], [1, 2], diff) == {"new": [1, 2], "old": [2]}

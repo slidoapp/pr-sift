@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import warnings
 import webbrowser
 from collections import Counter
 from pathlib import Path
@@ -15,6 +16,9 @@ from reviewer.store import Store
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Parsing the code under review must not print its own warnings,
+    # such as invalid escape sequences.
+    warnings.simplefilter("ignore", SyntaxWarning)
     parser = argparse.ArgumentParser(prog="reviewer", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 

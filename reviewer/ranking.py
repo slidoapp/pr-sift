@@ -53,7 +53,9 @@ def validate(data: object, expected: set[str], known: set[str], lines: dict[str,
             errors.append(f"units[{i}]: description must be a string or null")
         if unit.get("attention", "read") not in ATTENTION:
             errors.append(f"units[{i}]: attention must be one of {', '.join(ATTENTION)}")
-        errors += _highlight_errors(i, unit.get("highlights", []), (lines or {}).get(fingerprint))
+        allowed = (lines or {}).get(fingerprint)
+        errors += _highlight_errors(i, unit.get("highlights", []), allowed)
+        errors += _section_errors(i, unit.get("sections", []), allowed)
         ranked.add(fingerprint)
     if missing := expected - ranked:
         errors.append(f"{len(missing)} units are not ranked: {', '.join(sorted(missing))}")
@@ -70,6 +72,23 @@ def _highlight_errors(i, highlights, allowed):
             errors.append(f"{where} must have a non-empty note")
             continue
         line = highlight.get("line")
+        if not isinstance(line, int) or isinstance(line, bool):
+            errors.append(f"{where}: line must be a file line number")
+        elif allowed is not None and line not in allowed:
+            errors.append(f"{where}: line {line} is not in the unit's diff")
+    return errors
+
+
+def _section_errors(i, sections, allowed):
+    if not isinstance(sections, list):
+        return [f"units[{i}]: sections must be a list"]
+    errors = []
+    for j, section in enumerate(sections):
+        where = f"units[{i}].sections[{j}]"
+        if not isinstance(section, dict) or not isinstance(section.get("title"), str) or not section["title"].strip():
+            errors.append(f"{where} must have a non-empty title")
+            continue
+        line = section.get("line")
         if not isinstance(line, int) or isinstance(line, bool):
             errors.append(f"{where}: line must be a file line number")
         elif allowed is not None and line not in allowed:
