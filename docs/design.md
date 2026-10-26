@@ -114,7 +114,7 @@ collapsed "Hidden" section with counts. Nothing is dropped silently.
 | `local-rename` | equal after canonical local renaming |
 | `symbol-rename` | a removed and an added private symbol have equal normalized bodies |
 | `move` | same symbol, same normalized body, different file |
-| `imports` | only import order or grouping changed |
+| `imports` | only imports changed (reordered, or added or removed without adding or removing a module dependency or third-party package) |
 | `generated` | lockfiles (`uv.lock`, `poetry.lock`, …), files matching configured globs |
 
 Renames or moves of **public** symbols are interface changes, not noise.
@@ -169,9 +169,9 @@ reviewer. Pre-filtering decides how much of each change to show.
 
 | Attention | Decided by | Shown as |
 |---|---|---|
-| `read` | default | full card with diff |
+| `read` | default; always for a unit with highlights | card with its key lines |
 | `skim` | Claude, with a reason: repetitive tests, fixtures, trivial helpers, code whose mistakes a first run or the tests would catch | one-line row, expandable |
-| `hidden` | the noise rules | count and compact rows |
+| `hide` / hidden | Claude (`hide`), with a reason: trivial constants, aliases, test input; or the noise rules | collapsed list with the reason |
 
 **Folds** (deterministic, `reviewer/folds.py`). Long collections whose
 lines are all added or all unchanged collapse into a table:
@@ -193,6 +193,19 @@ with a note, e.g. a max-int id written to a production index, a fixed
 sleep, a destructive call, a changed limit. They show as callouts on
 the card, are marked in the diff and in fold tables, and survive
 folding.
+
+**Key lines** (deterministic, `reviewer/skeleton.py`). A card shows
+only its key lines by default; the rest collapse into bars that open on
+click, and a switch shows the full diff:
+
+- the signature, and the headers of blocks that contain changes,
+- `return`, `raise`, `assert`, `break` and `continue`,
+- changed statements that call something with an effect (not logging,
+  `print`, or trivial helpers like `append`, `get`, `len`),
+- changed statements that write a name a decision reads (an `if` or
+  `while` condition, a `return`, `raise` or `assert`), such as the
+  appends to a list that is checked later,
+- highlighted lines, and folds that contain one.
 
 **Progress** counts changed lines as reviewed, skim (skim units and
 folded lines), hidden and left. The percentage is of the lines left to
@@ -224,15 +237,15 @@ unranked:
       "reason": "why this tier, one line",
       "summary": "what changes in behavior, one line",
       "description": "what the symbol does, one line, or null",
-      "attention": "read | skim",
+      "attention": "read | skim | hide",
       "highlights": [{"line": 312, "note": "max int32 as a fake id in the production index"}]
     }
   ]
 }
 ```
 
-`attention` defaults to `read`. For `skim` units, `reason` says why
-skimming is safe. Highlight lines are file lines of the unit's diff;
+`attention` is `read` (the default), `skim` or `hide`. For `skim` and
+`hide` units, `reason` says why. Highlight lines are file lines of the unit's diff;
 `ingest` rejects any other. `reviewer analyze --rerank` sends every
 unit to Claude again, for example after the ranking format changes.
 

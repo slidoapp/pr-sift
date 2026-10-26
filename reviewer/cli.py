@@ -124,11 +124,11 @@ def cmd_ingest(args) -> int:
     store.save_summary(row["id"], row["head_sha"], data["overview"], data.get("architecture_summary"), data["components"])
     rankings = store.rankings(known)
     tiers = Counter(rankings[u["fingerprint"]]["tier"] for u in units if u["fingerprint"] in rankings)
-    skim = sum(1 for u in units if u["fingerprint"] in rankings and rankings[u["fingerprint"]]["attention"] == "skim")
+    attention = Counter(rankings[u["fingerprint"]]["attention"] for u in units if u["fingerprint"] in rankings)
     print(
         f"{pr}: stored {len(data['units'])} rankings; "
         + ", ".join(f"{n} {t}" for t, n in sorted(tiers.items()))
-        + f"; {skim} to skim"
+        + f"; {attention['skim']} to skim, {attention['hide']} hidden"
     )
     return 0
 

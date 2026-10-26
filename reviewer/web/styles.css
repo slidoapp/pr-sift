@@ -570,3 +570,5 @@ table.diff tr.flash .code, .fold-table tr.flash td { background: var(--hl-bg); t
 .compact-highlights .callout { font-size: 13px; padding: 1px 0; }
 .compact-highlights .callout-line { color: #8a6100; }
 @media (prefers-color-scheme: dark) { .compact-highlights .callout-line { color: #f2c94c; } }
+table.diff tr.key-gap td { padding: 0 8px 0 70px; font-size: 11.5px; line-height: 16px; background: var(--surface-2); color: var(--faint); }
+table.diff tr.key-gap:hover td { color: var(--accent); }

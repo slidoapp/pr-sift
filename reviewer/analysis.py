@@ -8,7 +8,7 @@ from reviewer.diffs import numbered_diff
 from reviewer.folds import find_folds
 from reviewer.graph import GraphDiff, build_graph, diff_graphs, graph_signals, to_mermaid
 from reviewer.interfaces import InterfaceChange, annotate, diff_interfaces
-from reviewer.noise import classify
+from reviewer.noise import classify, hide_plain_imports
 from reviewer.repo import changed_paths, list_files, read_files
 from reviewer.units import Unit, diff_files, module_name
 
@@ -44,6 +44,7 @@ def analyze_revisions(git_dir: Path, base: str, head: str) -> Analysis:
         for unit in units:
             if qualname in (unit.qualname, unit.old_qualname):
                 unit.signals += sorted(signals - set(unit.signals))
+    hide_plain_imports(units)
 
     return Analysis(units, interfaces, graph)
 

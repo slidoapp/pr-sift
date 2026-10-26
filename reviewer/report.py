@@ -6,6 +6,7 @@ import textwrap
 
 from reviewer.diffs import diff_rows
 from reviewer.folds import Fold, find_folds
+from reviewer.skeleton import skeleton_lines
 from reviewer.store import Store
 from reviewer.units import DEFS, module_name
 
@@ -58,6 +59,7 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
     qualname = unit["qualname"]
     old_lines, new_lines = json.loads(unit["old_lines"]), json.loads(unit["new_lines"])
     diff = diff_rows(unit["old_body"], unit["new_body"], old_lines, new_lines)
+    highlights = json.loads(ranking["highlights"]) if ranking and ranking["highlights"] else []
     review = reviewed.get(qualname) or reviewed.get(unit["old_qualname"])
     if unit["fingerprint"] in reviewed_fingerprints:
         state = "seen"
@@ -80,9 +82,10 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
         "reason": ranking["reason"] if ranking else None,
         "summary": ranking["summary"] if ranking else None,
         "description": ranking["description"] if ranking else None,
-        "attention": "hidden" if unit["noise"] else (ranking["attention"] if ranking and ranking["attention"] else "read"),
-        "highlights": json.loads(ranking["highlights"]) if ranking and ranking["highlights"] else [],
+        "attention": attention(unit, ranking, highlights),
+        "highlights": highlights,
         "folds": shown_folds(find_folds(unit["new_body"], new_lines, unit["path"]), diff),
+        "key_lines": key_lines(unit, old_lines, new_lines, diff),
         "docstring": doc_line(unit["new_body"] or unit["old_body"]) if unit["kind"] != "file" else None,
         "state": state,
         "flagged": qualname in flagged,
@@ -93,6 +96,16 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
             diff_rows(review["reviewed_body"], unit["new_body"], [], new_lines) if state == "changed" else None
         ),
     }
+
+
+def attention(unit, ranking, highlights) -> str:
+    """hidden for noise; read for anything with a highlight, since a line
+    worth a look must not be skimmed past; else what Claude decided."""
+    if unit["noise"]:
+        return "hidden"
+    if highlights:
+        return "read"
+    return ranking["attention"] if ranking and ranking["attention"] else "read"
 
 
 def shown_folds(folds: list[Fold], diff: list[list]) -> list[dict]:
@@ -108,6 +121,19 @@ def shown_folds(folds: list[Fold], diff: list[list]) -> list[dict]:
         if {row[0] for row in span} in ({"+"}, {" "}):
             shown.append(fold.to_dict() | {"changed_lines": sum(row[0] == "+" for row in span)})
     return shown
+
+
+def key_lines(unit, old_lines: list[int], new_lines: list[int], diff: list[list]) -> dict[str, list[int]]:
+    """The skeleton of a Python unit on both sides of its diff: new file
+    lines for added and unchanged rows, old file lines for removed ones."""
+    if not unit["path"].endswith(".py"):
+        return {"new": [], "old": []}
+    top_level = unit["kind"] in ("statement", "imports")
+    added = {row[2] for row in diff if row[0] == "+"}
+    removed = {row[1] for row in diff if row[0] == "-"}
+    new = skeleton_lines(unit["new_body"], new_lines, added, top_level) if unit["new_body"] else set()
+    old = skeleton_lines(unit["old_body"], old_lines, removed, top_level) if unit["old_body"] else set()
+    return {"new": sorted(new), "old": sorted(old & removed)}
 
 
 def doc_line(body: str) -> str | None:

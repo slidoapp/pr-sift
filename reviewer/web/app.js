@@ -20,18 +20,18 @@ const GROUPS = [
   },
   {
     key: "skim", label: "Skim", desc: "Repetitive or low-risk: the summary is enough",
-    has: (u) => !u.noise && u.attention === "skim", lines: (u) => u.changed_lines,
+    has: (u) => !isHidden(u) && u.attention === "skim", lines: (u) => u.changed_lines,
   },
   {
-    key: "hidden", label: "Hidden", desc: "Noise: nothing a reviewer needs to see",
-    has: (u) => Boolean(u.noise), lines: (u) => u.changed_lines,
+    key: "hidden", label: "Hidden", desc: "Noise, or nothing to review",
+    has: (u) => isHidden(u), lines: (u) => u.changed_lines,
   },
 ];
 const NOISE = {
   comment: "Only comments changed",
   formatting: "Only formatting changed",
   docstring: "Only docstrings changed",
-  imports: "Only the order of imports changed",
+  imports: "Only imports changed, and none adds or removes a dependency",
   "local-rename": "Only local names changed",
   "symbol-rename": "Private symbol renamed, body unchanged",
   move: "Private symbol moved, body unchanged",
@@ -40,6 +40,7 @@ const NOISE = {
 const NOISE_SHORT = {
   comment: "comments", formatting: "formatting", docstring: "docstrings", imports: "import order",
   "local-rename": "local renames", "symbol-rename": "private renames", move: "private moves", generated: "generated",
+  hide: "nothing to review (Claude)",
 };
 const CATEGORY_TITLES = {
   signature: "Signatures", "model-field": "Model fields", route: "Routes", cli: "CLI",
@@ -59,6 +60,7 @@ const STATES = {
 const MAX_AUTO_OPEN = 25;
 const GAP_KEEP = 3; // unchanged lines kept around a collapsed run
 const GAP_MIN = 8; // shortest run of unchanged lines that gets collapsed
+const KEY_CONTEXT = 2; // lines shown around a highlight in the key-lines view of files without a skeleton
 const TABS = ["overview", "architecture", "interfaces", "changes"];
 
 let data = null;
@@ -141,15 +143,17 @@ function toast(message) {
 
 const tierOf = (u) => (u.noise ? "hidden" : u.tier || "unranked");
 // The Changes section a unit is listed in: its tier when it's to be read.
-const sectionOf = (u) => (u.noise ? "hidden" : u.attention === "skim" ? "skim" : u.tier || "unranked");
-const isRead = (u) => !u.noise && u.attention !== "skim";
+const sectionOf = (u) => (isHidden(u) ? "hidden" : u.attention === "skim" ? "skim" : u.tier || "unranked");
+// Hidden by the noise rules, or by Claude as having nothing to review.
+const isHidden = (u) => Boolean(u.noise) || u.attention === "hide";
+const isRead = (u) => !isHidden(u) && u.attention !== "skim";
 const tierInfo = (key) => TIERS.find((t) => t.key === key);
-const visibleUnits = () => data.units.filter((u) => !u.noise);
+const visibleUnits = () => data.units.filter((u) => !isHidden(u));
 
 function matchesFilter(u) {
   switch (ui.filter) {
-    case "todo": return !u.noise && u.state !== "seen";
-    case "changed": return !u.noise && u.state === "changed";
+    case "todo": return !isHidden(u) && u.state !== "seen";
+    case "changed": return !isHidden(u) && u.state === "changed";
     case "flagged": return u.flagged;
     default: return true;
   }
@@ -189,8 +193,8 @@ function lineStats() {
   const left = sum(read.filter((u) => u.state !== "seen"), toRead);
   return {
     total: sum(data.units),
-    hidden: sum(data.units.filter((u) => u.noise)),
-    skim: sum(data.units.filter((u) => !u.noise && u.attention === "skim")) + sum(read, foldedLines),
+    hidden: sum(data.units.filter(isHidden)),
+    skim: sum(data.units.filter((u) => !isHidden(u) && u.attention === "skim")) + sum(read, foldedLines),
     reviewed,
     left,
     read: reviewed + left,
@@ -214,7 +218,7 @@ function renderProgress() {
   const n = (value) => value.toLocaleString();
   document.getElementById("progress").title =
     `Of ${n(lines.total)} changed lines: ${n(lines.read)} to read (${n(lines.reviewed)} reviewed, ` +
-    `${n(lines.left)} left), ${n(lines.skim)} to skim, ${n(lines.hidden)} hidden by noise rules. ` +
+    `${n(lines.left)} left), ${n(lines.skim)} to skim, ${n(lines.hidden)} hidden (noise, or nothing to review). ` +
     `${seen} of ${units.length} units reviewed.`;
 }
 
@@ -276,11 +280,11 @@ function renderOverview() {
       el("div", { class: "label" }, el("span", { class: "dot", style: { background: `var(--tier-${tier.key})` } }), tier.label),
     );
   });
-  const hidden = data.units.filter((u) => u.noise);
+  const hidden = data.units.filter(isHidden);
   stats.push(
     el("button", { class: "stat", onclick: () => revealTier("hidden") },
       el("div", { class: "value", text: hidden.length }),
-      el("div", { class: "label" }, el("span", { class: "dot", style: { background: "var(--tier-hidden)" } }), "Hidden as noise"),
+      el("div", { class: "label" }, el("span", { class: "dot", style: { background: "var(--tier-hidden)" } }), "Hidden"),
     ),
   );
   cards.push(el("div", { class: "stats" }, stats));
@@ -307,9 +311,10 @@ function progressCard(hidden) {
   const n = (value) => value.toLocaleString();
   const reasons = {};
   for (const u of hidden) {
-    reasons[u.noise] ??= { units: 0, lines: 0 };
-    reasons[u.noise].units++;
-    reasons[u.noise].lines += u.changed_lines;
+    const reason = u.noise || "hide";
+    reasons[reason] ??= { units: 0, lines: 0 };
+    reasons[reason].units++;
+    reasons[reason].lines += u.changed_lines;
   }
   const meter = (className, value) =>
     el("div", { class: `meter-part ${className}`, style: { width: `${(100 * value) / (lines.total || 1)}%` } });
@@ -324,7 +329,7 @@ function progressCard(hidden) {
       el("span", {}, el("i", { class: "dot", style: { background: "var(--tier-skim)" } }),
         el("b", { text: `${percent(lines.skim, lines.total)}%` }), ` to skim: folded or summarized (${n(lines.skim)} lines)`),
       el("span", {}, el("i", { class: "dot", style: { background: "var(--tier-hidden)" } }),
-        el("b", { text: `${percent(lines.hidden, lines.total)}%` }), ` hidden by rules (${n(lines.hidden)} lines)`),
+        el("b", { text: `${percent(lines.hidden, lines.total)}%` }), ` hidden: noise or nothing to review (${n(lines.hidden)} lines)`),
       el("span", { class: "muted", text: `of ${n(lines.total)} changed lines` }),
     ),
     hidden.length > 0 && el("div", { class: "hidden-breakdown" },
@@ -499,8 +504,8 @@ function renderChanges() {
   const panel = document.getElementById("panel-changes");
   const counts = {
     all: data.units.length,
-    todo: data.units.filter((u) => !u.noise && u.state !== "seen").length,
-    changed: data.units.filter((u) => !u.noise && u.state === "changed").length,
+    todo: data.units.filter((u) => !isHidden(u) && u.state !== "seen").length,
+    changed: data.units.filter((u) => !isHidden(u) && u.state === "changed").length,
     flagged: data.units.filter((u) => u.flagged).length,
   };
   const toolbar = el("div", { class: "toolbar" },
@@ -574,7 +579,7 @@ function unitCard(u) {
   const compact = !isRead(u);
   const state = STATES[u.state];
   const card = el("article", {
-    class: `unit ${u.state === "seen" && !u.noise ? "seen" : ""} ${compact ? "compact" : ""}`,
+    class: `unit ${u.state === "seen" && !isHidden(u) ? "seen" : ""} ${compact ? "compact" : ""}`,
     id: `unit-${u.qualname}`,
     tabindex: "-1",
     dataset: { qualname: u.qualname, open: String(open) },
@@ -595,7 +600,7 @@ function unitCard(u) {
   if (u.flagged) chips.push(el("span", { class: "chip removed", text: "⚑ flagged" }));
 
   const toggle = (e) => { if (!e.target.closest("button")) toggleUnit(u.qualname); };
-  const actions = u.noise
+  const actions = isHidden(u)
     ? el("span")
     : el("div", { class: "unit-actions" },
         el("button", {
@@ -616,9 +621,10 @@ function unitCard(u) {
   if (compact) {
     // One line: name, summary, and the reason to skim on hover.
     const summary = u.noise ? NOISE[u.noise] || u.noise : u.summary;
+    const why = { skim: "Why skim", hide: "Why hidden" }[u.attention];
     card.append(
-      el("div", { class: "unit-head", onclick: toggle, title: u.attention === "skim" && u.reason ? `Why skim: ${u.reason}` : null },
-        el("span", { class: `state ${u.noise ? "" : u.state}`, title: u.noise ? "Hidden" : state.title, text: u.noise ? "·" : state.icon }),
+      el("div", { class: "unit-head", onclick: toggle, title: why && u.reason && !u.noise ? `${why}: ${u.reason}` : null },
+        el("span", { class: `state ${isHidden(u) ? "" : u.state}`, title: isHidden(u) ? "Hidden" : state.title, text: isHidden(u) ? "·" : state.icon }),
         el("div", { class: "unit-line" },
           el("span", { class: "qualname" }, el("span", { class: "symbol", text: symbol })),
           u.highlights.length > 0 && el("span", { class: "chip highlight", text: `⚠ ${u.highlights.length}` }),
@@ -643,7 +649,7 @@ function unitCard(u) {
   }
 
   const head = el("div", { class: "unit-head", onclick: toggle },
-    el("span", { class: `state ${u.noise ? "" : u.state}`, title: u.noise ? "Hidden" : state.title, text: u.noise ? "·" : state.icon }),
+    el("span", { class: `state ${isHidden(u) ? "" : u.state}`, title: isHidden(u) ? "Hidden" : state.title, text: isHidden(u) ? "·" : state.icon }),
     el("div", { class: "unit-title" },
       el("span", { class: "qualname" }, module && el("span", { class: "module", text: module }), el("span", { class: "symbol", text: symbol })),
       chips,
@@ -658,30 +664,28 @@ function unitCard(u) {
 
 function unitBody(u) {
   const body = el("div", { class: "unit-body" });
-  if (u.reason) body.append(el("p", { class: "reason" }, el("b", { text: u.attention === "skim" ? "Why skim: " : `Why ${tierOf(u)}: ` }), rich(u.reason)));
+  if (u.reason) body.append(el("p", { class: "reason" }, el("b", { text: u.attention === "skim" ? "Why skim: " : u.attention === "hide" ? "Why hidden: " : `Why ${tierOf(u)}: ` }), rich(u.reason)));
   if (u.highlights.length) body.append(callouts(u));
   if (u.old_qualname || u.old_path) {
     body.append(el("p", { class: "moved", text: `${u.status === "renamed" ? "Renamed" : "Moved"} from ${u.old_qualname || u.qualname}${u.old_path ? ` (${u.old_path})` : ""}` }));
   }
-  let rows = u.diff;
-  let folds = u.folds;
-  if (u.since_review) {
-    const view = ui.view.get(u.qualname) || "since";
-    rows = view === "since" ? u.since_review : u.diff;
-    if (view === "since") folds = [];
-    body.append(
-      el("div", { class: "segmented", role: "group" },
-        [["since", "Since your review"], ["full", "Full diff"]].map(([key, label]) =>
-          el("button", {
-            "aria-pressed": String(view === key),
-            text: label,
-            onclick: () => { ui.view.set(u.qualname, key); rerenderUnit(u.qualname); },
-          }),
-        ),
+  // Key lines by default: the highlights with a little context. A
+  // changed unit starts with what changed since you reviewed it.
+  const view = ui.view.get(u.qualname) || (u.since_review ? "since" : "key");
+  const views = [...(u.since_review ? [["since", "Since your review"]] : []), ["key", "Key lines"], ["full", "Full diff"]];
+  body.append(
+    el("div", { class: "segmented", role: "group", "aria-label": "Diff view" },
+      views.map(([key, label]) =>
+        el("button", {
+          "aria-pressed": String(view === key),
+          text: label,
+          onclick: () => { ui.view.set(u.qualname, key); rerenderUnit(u.qualname); },
+        }),
       ),
-    );
-  }
-  body.append(renderDiff(rows, u.language, u.qualname, folds, u.highlights));
+    ),
+  );
+  if (view === "since") body.append(renderDiff(u.since_review, u.language, u.qualname, [], u.highlights));
+  else body.append(renderDiff(u.diff, u.language, u.qualname, u.folds, u.highlights, view === "key" ? u.key_lines : null));
   return body;
 }
 
@@ -718,8 +722,11 @@ function highlight(code, text, language) {
   code.textContent = text;
 }
 
-// The diff as tables of lines, with folds as blocks between them.
-function renderDiff(rows, language, key, folds = [], highlights = []) {
+// The diff as tables of lines, with folds as blocks between them. With
+// keyLines ({new, old} skeleton lines), only those, highlighted lines
+// with KEY_CONTEXT lines around them, and folds holding a highlight are
+// shown; the rest collapses into bars.
+function renderDiff(rows, language, key, folds = [], highlights = [], keyLines = null) {
   const wrap = el("div", { class: "diff-wrap" });
   let tbody = el("tbody");
   const flush = () => {
@@ -735,37 +742,75 @@ function renderDiff(rows, language, key, folds = [], highlights = []) {
     const note = notes.get(lineOf(row));
     if (note) tbody.append(el("tr", { class: "hl-note" }, el("td", { colspan: "3" }, "⚠ ", rich(note))));
   };
-  let i = 0;
-  while (i < rows.length) {
-    const fold = rows[i][2] !== null && foldAt.get(rows[i][2]);
-    if (fold) {
-      flush();
-      wrap.append(foldView(fold, key, notes));
-      while (i < rows.length && rows[i][2] !== null && rows[i][2] <= fold.end) i++;
-      continue;
-    }
-    if (rows[i][0] === " ") {
-      let end = i;
-      while (end < rows.length && rows[end][0] === " " && !foldAt.has(rows[end][2])) end++;
-      const gapKey = `${key}:${i}`;
-      const highlighted = rows.slice(i, end).some((row) => notes.has(lineOf(row)));
-      if (end - i >= GAP_MIN && !ui.gaps.has(gapKey) && !highlighted) {
-        const keepStart = i === 0 ? 0 : GAP_KEEP;
-        const keepEnd = end === rows.length || foldAt.has(rows[end]?.[2]) ? 0 : GAP_KEEP;
-        for (let k = i; k < i + keepStart; k++) emit(rows[k]);
-        const hidden = end - i - keepStart - keepEnd;
-        tbody.append(
-          el("tr", { class: "gap", onclick: () => { ui.gaps.add(gapKey); rerenderUnit(key); } },
-            el("td", { colspan: "3", text: `⋯ ${plural(hidden, "unchanged line")}` }),
-          ),
-        );
-        for (let k = end - keepEnd; k < end; k++) emit(rows[k]);
-        i = end;
+  const renderRange = (from, to) => {
+    let i = from;
+    while (i < to) {
+      const fold = rows[i][2] !== null && foldAt.get(rows[i][2]);
+      if (fold) {
+        flush();
+        wrap.append(foldView(fold, key, notes));
+        while (i < to && rows[i][2] !== null && rows[i][2] <= fold.end) i++;
         continue;
       }
+      if (rows[i][0] === " ") {
+        let end = i;
+        while (end < to && rows[end][0] === " " && !foldAt.has(rows[end][2])) end++;
+        const gapKey = `${key}:${i}`;
+        const highlighted = rows.slice(i, end).some((row) => notes.has(lineOf(row)));
+        if (end - i >= GAP_MIN && !ui.gaps.has(gapKey) && !highlighted) {
+          const keepStart = i === from ? 0 : GAP_KEEP;
+          const keepEnd = end === to || foldAt.has(rows[end]?.[2]) ? 0 : GAP_KEEP;
+          for (let k = i; k < i + keepStart; k++) emit(rows[k]);
+          tbody.append(gapRow(`⋯ ${plural(end - i - keepStart - keepEnd, "unchanged line")}`, gapKey));
+          for (let k = end - keepEnd; k < end; k++) emit(rows[k]);
+          i = end;
+          continue;
+        }
+      }
+      emit(rows[i]);
+      i++;
     }
-    emit(rows[i]);
-    i++;
+  };
+  const gapRow = (text, gapKey) =>
+    el("tr", { class: "gap", onclick: () => { ui.gaps.add(gapKey); rerenderUnit(key); } }, el("td", { colspan: "3", text }));
+
+  if (!keyLines) {
+    renderRange(0, rows.length);
+    flush();
+    return wrap;
+  }
+  const keyNew = new Set(keyLines.new);
+  const keyOld = new Set(keyLines.old);
+  const shown = new Set();
+  rows.forEach((row, i) => {
+    if (row[0] === "-" ? keyOld.has(row[1]) : keyNew.has(row[2])) shown.add(i);
+  });
+  // Code with a skeleton needs no context around highlights; other files do.
+  const context = keyNew.size || keyOld.size ? 0 : KEY_CONTEXT;
+  rows.forEach((row, i) => {
+    if (notes.has(lineOf(row))) for (let k = i - context; k <= i + context; k++) shown.add(k);
+  });
+  for (const fold of folds) {
+    if (!highlights.some((h) => h.line >= fold.start && h.line <= fold.end)) continue;
+    rows.forEach((row, i) => { if (row[2] !== null && row[2] >= fold.start && row[2] <= fold.end) shown.add(i); });
+  }
+  let i = 0;
+  while (i < rows.length) {
+    const visible = shown.has(i);
+    let end = i;
+    while (end < rows.length && shown.has(end) === visible) end++;
+    const gapKey = `${key}:key${i}`;
+    if (visible || ui.gaps.has(gapKey)) {
+      renderRange(i, end);
+    } else {
+      const added = rows.slice(i, end).filter((r) => r[0] === "+").length;
+      const removed = rows.slice(i, end).filter((r) => r[0] === "-").length;
+      const changes = [added && `+${added}`, removed && `−${removed}`].filter(Boolean).join(" ");
+      const row = gapRow(`⋯ ${plural(end - i, "line")}${changes ? ` (${changes})` : ""}`, gapKey);
+      row.classList.add("key-gap");
+      tbody.append(row);
+    }
+    i = end;
   }
   flush();
   return wrap;
@@ -987,10 +1032,10 @@ function onKey(event) {
       else moveFocus(1);
       break;
     case "r":
-      if (unit && !unit.noise) updateReview(unit, { reviewed: unit.state !== "seen" }, true);
+      if (unit && !isHidden(unit)) updateReview(unit, { reviewed: unit.state !== "seen" }, true);
       break;
     case "f":
-      if (unit && !unit.noise) updateReview(unit, { flagged: !unit.flagged });
+      if (unit && !isHidden(unit)) updateReview(unit, { flagged: !unit.flagged });
       break;
     default:
       return;
@@ -1016,7 +1061,7 @@ async function main() {
   }
 
   // Open the units most worth reading first.
-  const worth = data.units.filter((u) => !u.noise && u.state !== "seen" && OPEN_BY_DEFAULT.has(sectionOf(u)));
+  const worth = data.units.filter((u) => !isHidden(u) && u.state !== "seen" && OPEN_BY_DEFAULT.has(sectionOf(u)));
   for (const u of worth.slice(0, MAX_AUTO_OPEN)) ui.open.add(u.qualname);
 
   renderHeader();

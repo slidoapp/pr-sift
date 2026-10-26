@@ -202,12 +202,17 @@ def test_units_carry_attention_and_highlights():
     store = Store()
     pr_id = analyze(store, FIRST)
     f = unit(store, pr_id, "pkg.mod.f")
+    g = unit(store, pr_id, "pkg.mod.g")
     store.save_rankings(
-        [{"fingerprint": f["fingerprint"], "tier": "behavior", "reason": "r", "summary": "s",
-          "attention": "skim", "highlights": [{"line": 2, "note": "n"}]}],
+        [
+            # A highlight makes a unit read, whatever Claude said.
+            {"fingerprint": f["fingerprint"], "tier": "behavior", "reason": "r", "summary": "s",
+             "attention": "skim", "highlights": [{"line": 2, "note": "n"}]},
+            {"fingerprint": g["fingerprint"], "tier": "detail", "reason": "r", "summary": "s", "attention": "hide"},
+        ],
         model=None,
     )
     views = {u["qualname"]: u for u in page_data(store, pr_id)["units"]}
-    assert (views["pkg.mod.f"]["attention"], views["pkg.mod.f"]["highlights"]) == ("skim", [{"line": 2, "note": "n"}])
-    assert (views["pkg.mod.g"]["attention"], views["pkg.mod.g"]["highlights"]) == ("read", [])
+    assert (views["pkg.mod.f"]["attention"], views["pkg.mod.f"]["highlights"]) == ("read", [{"line": 2, "note": "n"}])
+    assert (views["pkg.mod.g"]["attention"], views["pkg.mod.g"]["highlights"]) == ("hide", [])
     assert views["pkg.mod._h"]["attention"] == "hidden"

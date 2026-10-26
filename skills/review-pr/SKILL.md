@@ -70,7 +70,7 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
          "reason": "why this tier, one line",
          "summary": "what changes, one line",
          "description": "what the symbol does, one line, or null",
-         "attention": "read | skim",
+         "attention": "read | skim | hide",
          "highlights": [{"line": 312, "note": "why this line deserves a look"}]
        }
      ]
@@ -146,8 +146,14 @@ Guidance:
 The reviewer wants to read only what can hide a mistake. Everything
 else should get out of the way.
 
-**`attention`.** Use `skim` for units a reviewer doesn't need to read
-line by line, and say why in `reason`:
+**`attention`.** Use `hide` for units with nothing to review, and say
+why in `reason`: trivial constants and aliases (`EVENT = {"id": TEST_ID}`),
+test input text, values only other reviewed code gives meaning to.
+Import changes that add no dependency are hidden by a rule, so they
+don't reach you.
+
+Use `skim` for units a reviewer doesn't need to read line by line, and
+say why in `reason`:
 
 - repetitive code, such as many similar test cases, fixtures and request
   payloads,
@@ -159,7 +165,9 @@ line by line, and say why in `reason`:
 
 Keep `read` (the default) for anything with real logic, error handling,
 data writes, security, concurrency or interface changes, even when it's
-short. When unsure, use `read`.
+short. When unsure, use `read`. A unit with highlights is always shown
+as `read`, whatever its `attention`: a line worth a look must not be
+skimmed past.
 
 **`highlights`.** For any unit, read or skim, list the few lines a
 reviewer should look at even if they read nothing else, especially

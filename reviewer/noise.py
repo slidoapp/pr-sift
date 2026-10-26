@@ -63,3 +63,15 @@ def _imports_and_rest(module):
 
 def _keyword_params(func):
     return [a.arg for a in func.args.args + func.args.kwonlyargs]
+
+
+def hide_plain_imports(units: list[Unit]) -> None:
+    """Label import changes that add or remove no dependency as noise.
+
+    Runs after the graph signals are attached: an imports unit without
+    new-module-edge, removed-module-edge or new-dependency signals only
+    makes names available to code that is reviewed on its own.
+    """
+    for unit in units:
+        if unit.kind == "imports" and unit.noise is None and not unit.signals:
+            unit.noise = "imports"

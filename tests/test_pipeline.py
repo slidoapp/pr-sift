@@ -151,3 +151,15 @@ def test_unit_diff_uses_file_line_numbers():
         "    5 +     a = 2",
         "    6       return a",
     ])
+
+
+def test_imports_without_new_dependencies_are_noise(git_repo):
+    base = git_repo.commit({"a.py": "import os\n\n\ndef f():\n    return os.sep\n", "b.py": "X = 1\n"})
+    head = git_repo.commit({
+        "a.py": "import os\nimport sys\n\n\ndef f():\n    return os.sep + sys.platform\n",
+        "b.py": "import a\n\nX = 1\n",
+    })
+    units = {u.qualname: u for u in analyze_revisions(git_repo.git_dir, base, head).units}
+    assert units["a.<imports>"].noise == "imports"
+    assert units["b.<imports>"].noise is None
+    assert units["b.<imports>"].signals == ["new-module-edge"]

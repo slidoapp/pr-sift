@@ -1,7 +1,7 @@
 """Validate the ranking the model writes for an analysis."""
 
 TIERS = ("architecture", "interface", "behavior", "detail")
-ATTENTION = ("read", "skim")
+ATTENTION = ("read", "skim", "hide")
 
 
 def validate(data: object, expected: set[str], known: set[str], lines: dict[str, set[int]] | None = None) -> list[str]:

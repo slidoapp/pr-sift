@@ -67,7 +67,7 @@ def test_attention_and_highlights():
         "highlights": [{"line": 99, "note": "x"}, {"line": "11", "note": "x"}, {"line": 11, "note": ""}],
     }
     assert validate(ranking(units=[bad]), {"a"}, {"a"}, lines) == [
-        "units[0]: attention must be one of read, skim",
+        "units[0]: attention must be one of read, skim, hide",
         "units[0].highlights[0]: line 99 is not in the unit's diff",
         "units[0].highlights[1]: line must be a file line number",
         "units[0].highlights[2] must have a non-empty note",
