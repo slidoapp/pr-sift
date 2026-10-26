@@ -164,7 +164,8 @@ def to_mermaid(diff: GraphDiff) -> str:
     ids = {node: f"n{i}" for i, node in enumerate(diff.nodes)}
     lines = ["flowchart LR"]
     for node, status in diff.nodes.items():
-        lines.append(f'  {ids[node]}["{node}"]' + (f":::{status}" if status != "unchanged" else ""))
+        label = node.replace('"', "#quot;")
+        lines.append(f'  {ids[node]}["{label}"]' + (f":::{status}" if status != "unchanged" else ""))
     styles = []
     for i, ((a, b), status) in enumerate(diff.edges.items()):
         lines.append(f"  {ids[a]} {'-.->' if status == 'removed' else '-->'} {ids[b]}")

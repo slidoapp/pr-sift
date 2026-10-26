@@ -30,6 +30,7 @@ Or run the analysis yourself:
 
 ```bash
 reviewer analyze 123 --out analysis.json   # or owner/repo#123, or a PR URL
+reviewer serve 123                         # open the report in the browser
 reviewer status
 ```
 

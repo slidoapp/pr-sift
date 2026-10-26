@@ -247,9 +247,11 @@ diffed from the merge base of its base and head, as GitHub does.
 
 ## Report UI
 
-Plain HTML, CSS and JS in `reviewer/web/`, with diff2html and Mermaid
-vendored so it works offline. Served by `reviewer serve` on
-`127.0.0.1` with a random port; the command opens the browser.
+Plain HTML, CSS and JS in `reviewer/web/`, with Mermaid and
+highlight.js vendored so it works offline. Diffs are rendered by the
+page itself rather than diff2html, so lines can be made commentable.
+Served by `reviewer serve` on `127.0.0.1` with a random port; the
+command opens the browser. Light and dark themes follow the system.
 
 ```
 ┌ PR #123  Add retry policy to HTTP client      ● 3 new since your last review ┐
@@ -278,20 +280,24 @@ vendored so it works offline. Served by `reviewer serve` on
 - **Architecture:** the Mermaid graph diff, the summary, new
   third-party dependencies.
 - **Interfaces:** a before/after table of signatures, model fields,
-  routes, CLI options, env vars and dependencies.
+  routes, CLI options, env vars and dependencies, with the differing
+  tokens highlighted. Names link to their unit.
 - **Changes:** all units grouped by tier. Architecture, Interface and
   Behavior are expanded; Detail and Hidden are collapsed. Each unit
   shows its status, badges, summary, reason and diff.
 
 **Interaction:**
 
-- Syntax-highlighted diffs, split or unified.
+- Syntax-highlighted unified diffs of the whole unit with file line
+  numbers. Runs of eight or more unchanged lines are collapsed and can
+  be expanded.
 - Click a line to start a comment. Comments are saved as drafts
   immediately.
-- Filter: show only unreviewed or changed since review.
+- Filter: all, to review, changed since review, flagged.
 - Keyboard: `j`/`k` next and previous unit, `o` expand or collapse,
-  `r` mark reviewed, `f` flag, `c` comment, `?` help.
-- UI preferences (split or unified, collapsed sections) are kept in
+  `r` mark reviewed and move on, `f` flag, `c` comment, `1`–`4` tabs,
+  `?` help.
+- UI preferences (filter, collapsed sections) are kept in
   `localStorage`. All review state is kept in SQLite through the server.
 
 ### Server API

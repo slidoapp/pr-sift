@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="reviewer-token" content="__TOKEN__">
+  <title>PR Review</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/vendor/highlight.min.js" defer></script>
+  <script src="/static/vendor/mermaid.min.js" defer></script>
+  <script src="/static/app.js" type="module"></script>
+</head>
+<body>
+  <header class="top" id="top">
+    <div class="wrap">
+      <div class="eyebrow"><span id="repo"></span><span class="sep">·</span><span id="number"></span></div>
+      <h1 id="title">Loading…</h1>
+      <div class="meta" id="meta"></div>
+    </div>
+  </header>
+
+  <div class="bar" id="bar">
+    <div class="wrap bar-inner">
+      <nav class="tabs" role="tablist" aria-label="Report sections">
+        <button role="tab" data-tab="overview" id="tab-overview">Overview</button>
+        <button role="tab" data-tab="architecture" id="tab-architecture">Architecture</button>
+        <button role="tab" data-tab="interfaces" id="tab-interfaces">Interfaces <span class="count" id="count-interfaces"></span></button>
+        <button role="tab" data-tab="changes" id="tab-changes">Changes <span class="count" id="count-changes"></span></button>
+      </nav>
+      <div class="progress" id="progress" title="Reviewed units, excluding hidden noise">
+        <div class="track"><div class="fill" id="progress-fill"></div></div>
+        <span id="progress-label"></span>
+      </div>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <div class="banner" id="banner" hidden></div>
+    <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" hidden></section>
+    <section id="panel-architecture" role="tabpanel" aria-labelledby="tab-architecture" hidden></section>
+    <section id="panel-interfaces" role="tabpanel" aria-labelledby="tab-interfaces" hidden></section>
+    <section id="panel-changes" role="tabpanel" aria-labelledby="tab-changes" hidden></section>
+  </main>
+
+  <footer class="wrap footer">
+    Press <kbd>?</kbd> for keyboard shortcuts.
+  </footer>
+
+  <div class="overlay" id="help" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <h2 id="help-title">Keyboard shortcuts</h2>
+      <dl class="keys">
+        <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next / previous unit</dd>
+        <dt><kbd>o</kbd> <kbd>Enter</kbd></dt><dd>Expand or collapse the unit</dd>
+        <dt><kbd>r</kbd></dt><dd>Mark reviewed (or not) and move on</dd>
+        <dt><kbd>f</kbd></dt><dd>Flag to come back to</dd>
+        <dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Switch tab</dd>
+        <dt><kbd>?</kbd></dt><dd>Show this help</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Close</dd>
+      </dl>
+      <button class="button" id="help-close">Close</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

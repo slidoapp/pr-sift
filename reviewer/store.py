@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     status TEXT NOT NULL,            -- reviewed | flagged
     created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS reviews_pr ON reviews (pr_id, qualname);
+CREATE UNIQUE INDEX IF NOT EXISTS reviews_unit ON reviews (pr_id, qualname, status);
 CREATE TABLE IF NOT EXISTS comments (
     id INTEGER PRIMARY KEY,
     pr_id INTEGER NOT NULL REFERENCES prs (id) ON DELETE CASCADE,
@@ -94,7 +94,9 @@ class Store:
         if path is None:
             path = data_dir() / "reviewer.db"
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path)
+        # The report server may run in another thread than the one that
+        # opened the store; it handles one request at a time.
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
@@ -186,3 +188,29 @@ class Store:
 
     def summary(self, pr_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM pr_summary WHERE pr_id = ?", (pr_id,)).fetchone()
+
+    def pr_by_id(self, pr_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM prs WHERE id = ?", (pr_id,)).fetchone()
+
+    def reviews(self, pr_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM reviews WHERE pr_id = ?", (pr_id,)).fetchall()
+
+    def set_review(self, pr_id: int, qualname: str, fingerprint: str, body: str, status: str) -> None:
+        """Record that a unit was reviewed or flagged, as it is now."""
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO reviews (pr_id, qualname, fingerprint, reviewed_body, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (pr_id, qualname, status) DO UPDATE SET
+                    fingerprint = excluded.fingerprint, reviewed_body = excluded.reviewed_body,
+                    created_at = excluded.created_at
+                """,
+                (pr_id, qualname, fingerprint, body, status, now()),
+            )
+
+    def clear_review(self, pr_id: int, qualname: str, status: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM reviews WHERE pr_id = ? AND qualname = ? AND status = ?", (pr_id, qualname, status)
+            )

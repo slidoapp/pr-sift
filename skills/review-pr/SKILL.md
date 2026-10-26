@@ -81,7 +81,13 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
    Use the same `<pr>` and `--repo` as in step 1. If it reports
    validation errors, fix the file and run it again.
 
-5. **Report to the user.** Give a short summary in the terminal:
+5. **Open the report.** Run `reviewer serve <pr>` (same `<pr>` and
+   `--repo`) in the background. It prints the report's URL and opens
+   it in the browser. There the user marks units reviewed and flags
+   them; this state survives force-pushes.
+
+6. **Report to the user.** Give the report URL and a short summary in
+   the terminal:
    - the overview,
    - the architecture summary, if any, and new third-party
      dependencies,
