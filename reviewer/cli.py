@@ -10,6 +10,7 @@ from pathlib import Path
 
 from reviewer import github, repo
 from reviewer.analysis import analyze_revisions, ranking_input, report_data
+from reviewer.config import ConfigError, load_agent_config
 from reviewer.ranking import to_offsets, validate, validate_walkthrough
 from reviewer.server import ReportServer
 from reviewer.store import Store
@@ -186,7 +187,12 @@ def cmd_serve(args) -> int:
         print(f"error: {pr} has not been analyzed; run reviewer analyze first", file=sys.stderr)
         return 1
     try:
-        server = ReportServer(store, row["id"], args.port)
+        config = load_agent_config()
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    try:
+        server = ReportServer(store, row["id"], args.port, config)
     except OSError as e:
         print(f"error: cannot listen on port {args.port}: {e.strerror}", file=sys.stderr)
         return 1

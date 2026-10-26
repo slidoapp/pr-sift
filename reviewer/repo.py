@@ -89,3 +89,28 @@ def read_files(git_dir: Path, rev: str, paths: list[str]) -> dict[str, str]:
         if header[1] == b"blob" and b"\0" not in content[:BINARY_PROBE]:
             files[path] = content.decode("utf-8", errors="replace")
     return files
+
+
+def clone_path(repo_key: str) -> Path:
+    """The cached bare clone of host/owner/name."""
+    host, owner, name = repo_key.split("/", 2)
+    return cache_dir() / host / owner / f"{name}.git"
+
+
+def worktree(repo_key: str, number: int, sha: str) -> Path:
+    """A detached checkout of sha for agents to read, made from the cached
+    clone. Older checkouts of the same PR are removed."""
+    git_dir = clone_path(repo_key)
+    if not (git_dir / "HEAD").exists():
+        raise GitError(f"no cached clone of {repo_key}; run reviewer analyze first")
+    parent = cache_dir() / "worktrees" / repo_key / f"pr-{number}"
+    path = parent / sha[:12]
+    if (path / ".git").exists():
+        return path
+    if parent.exists():
+        for old in parent.iterdir():
+            subprocess.run(["git", "--git-dir", str(git_dir), "worktree", "remove", "--force", str(old)], capture_output=True)
+    git(git_dir, "worktree", "prune")
+    parent.mkdir(parents=True, exist_ok=True)
+    git(git_dir, "worktree", "add", "--detach", "--force", str(path), sha)
+    return path

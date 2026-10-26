@@ -1,8 +1,10 @@
-"""SQLite storage for analyses, rankings, review state and comments."""
+"""SQLite storage for analyses, rankings, review state, comments and
+questions."""
 
 import json
 import os
 import sqlite3
+import threading
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,13 +68,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS reviews_unit ON reviews (pr_id, qualname, stat
 CREATE TABLE IF NOT EXISTS comments (
     id INTEGER PRIMARY KEY,
     pr_id INTEGER NOT NULL REFERENCES prs (id) ON DELETE CASCADE,
-    qualname TEXT NOT NULL,
-    fingerprint TEXT,
-    line_offset INTEGER,
-    side TEXT,
+    ANCHOR,
     body TEXT NOT NULL,
-    state TEXT NOT NULL,             -- draft | posted | orphaned
+    state TEXT NOT NULL,             -- draft | posted
     github_id INTEGER,
+    question_id INTEGER,             -- the question it was drafted from
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS questions (
+    id INTEGER PRIMARY KEY,
+    pr_id INTEGER NOT NULL REFERENCES prs (id) ON DELETE CASCADE,
+    ANCHOR,
+    status TEXT NOT NULL,            -- queued | running | done | failed | cancelled
+    resolved INTEGER NOT NULL DEFAULT 0,
+    session_id TEXT,                 -- the agent session follow-ups resume
+    workdir TEXT,                    -- where that session ran
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY,
+    question_id INTEGER NOT NULL REFERENCES questions (id) ON DELETE CASCADE,
+    role TEXT NOT NULL,              -- you | agent
+    body TEXT NOT NULL,
+    sources TEXT NOT NULL,           -- JSON list of {kind, ...}: files read, searches, URLs fetched
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pr_summary (
@@ -83,7 +104,20 @@ CREATE TABLE IF NOT EXISTS pr_summary (
     components TEXT NOT NULL,        -- JSON list
     walkthrough TEXT                 -- JSON list of blocks, see ranking.py
 );
-"""
+""".replace(
+    "ANCHOR",
+    # Where a comment or question attaches, see anchors.py.
+    """anchor_kind TEXT NOT NULL,      -- line | range | unit | walkthrough | pr
+    qualname TEXT,
+    fingerprint TEXT,                -- of the unit, or of the walkthrough block
+    side TEXT,                       -- old | new
+    start_offset INTEGER,            -- index into the unit's lines on that side
+    end_side TEXT,
+    end_offset INTEGER,
+    block INTEGER,                   -- walkthrough block index
+    quote TEXT""",
+)
+ANCHOR_FIELDS = ("anchor_kind", "qualname", "fingerprint", "side", "start_offset", "end_side", "end_offset", "block", "quote")
 
 
 def data_dir() -> Path:
@@ -99,13 +133,24 @@ class Store:
         if path is None:
             path = data_dir() / "reviewer.db"
         path.parent.mkdir(parents=True, exist_ok=True)
-        # The report server may run in another thread than the one that
-        # opened the store; it handles one request at a time.
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.path = path
+        # The report server's request threads and agent runs share one
+        # store: the lock keeps their queries and transactions apart.
+        self.lock = threading.RLock()
+        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=10)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self._drop_old_comments()
         self.conn.executescript(SCHEMA)
         self._migrate()
+
+    def _drop_old_comments(self) -> None:
+        """Earlier versions created a comments table without anchors and
+        never wrote to it: replace it."""
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(comments)")}
+        if "line_offset" in columns and not self.conn.execute("SELECT 1 FROM comments LIMIT 1").fetchone():
+            with self.conn:
+                self.conn.execute("DROP TABLE comments")
 
     def _migrate(self) -> None:
         """Add columns that databases created by earlier versions lack."""
@@ -252,3 +297,95 @@ class Store:
             self.conn.execute(
                 "DELETE FROM reviews WHERE pr_id = ? AND qualname = ? AND status = ?", (pr_id, qualname, status)
             )
+
+    # Comments and questions. These run in the report server's request
+    # threads and in agent runs, so they hold the lock.
+
+    def comments(self, pr_id: int) -> list[sqlite3.Row]:
+        with self.lock:
+            return self.conn.execute("SELECT * FROM comments WHERE pr_id = ? ORDER BY id", (pr_id,)).fetchall()
+
+    def comment(self, comment_id: int) -> sqlite3.Row | None:
+        with self.lock:
+            return self.conn.execute("SELECT * FROM comments WHERE id = ?", (comment_id,)).fetchone()
+
+    def add_comment(self, pr_id: int, anchor: dict, body: str, question_id: int | None = None) -> int:
+        with self.lock, self.conn:
+            return self.conn.execute(
+                f"""
+                INSERT INTO comments (pr_id, {", ".join(ANCHOR_FIELDS)}, body, state, question_id, created_at, updated_at)
+                VALUES (?, {", ".join("?" * len(ANCHOR_FIELDS))}, ?, 'draft', ?, ?, ?)
+                """,
+                (pr_id, *(anchor[f] for f in ANCHOR_FIELDS), body, question_id, now(), now()),
+            ).lastrowid
+
+    def update_comment(self, comment_id: int, body: str) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE comments SET body = ?, updated_at = ? WHERE id = ?", (body, now(), comment_id))
+
+    def delete_comment(self, comment_id: int) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+
+    def questions(self, pr_id: int) -> list[sqlite3.Row]:
+        with self.lock:
+            return self.conn.execute("SELECT * FROM questions WHERE pr_id = ? ORDER BY id", (pr_id,)).fetchall()
+
+    def question(self, question_id: int) -> sqlite3.Row | None:
+        with self.lock:
+            return self.conn.execute("SELECT * FROM questions WHERE id = ?", (question_id,)).fetchone()
+
+    def add_question(self, pr_id: int, anchor: dict) -> int:
+        with self.lock, self.conn:
+            return self.conn.execute(
+                f"""
+                INSERT INTO questions (pr_id, {", ".join(ANCHOR_FIELDS)}, status, created_at, updated_at)
+                VALUES (?, {", ".join("?" * len(ANCHOR_FIELDS))}, 'queued', ?, ?)
+                """,
+                (pr_id, *(anchor[f] for f in ANCHOR_FIELDS), now(), now()),
+            ).lastrowid
+
+    def update_question(self, question_id: int, **fields) -> None:
+        allowed = {"status", "resolved", "session_id", "workdir", "error"}
+        if not fields or set(fields) - allowed:
+            raise ValueError(f"cannot update {sorted(set(fields) - allowed)}")
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        with self.lock, self.conn:
+            self.conn.execute(
+                f"UPDATE questions SET {assignments}, updated_at = ? WHERE id = ?",
+                (*fields.values(), now(), question_id),
+            )
+
+    def delete_question(self, question_id: int) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM messages WHERE question_id = ?", (question_id,))
+            self.conn.execute("DELETE FROM questions WHERE id = ?", (question_id,))
+
+    def interrupt_questions(self, pr_id: int) -> None:
+        """Fail runs left queued or running by a server that stopped."""
+        with self.lock, self.conn:
+            self.conn.execute(
+                """
+                UPDATE questions SET status = 'failed', error = ?, updated_at = ?
+                WHERE pr_id = ? AND status IN ('queued', 'running')
+                """,
+                ("The report server stopped while this was running.", now(), pr_id),
+            )
+
+    def messages(self, question_ids: Iterable[int]) -> dict[int, list[sqlite3.Row]]:
+        ids = list(question_ids)
+        found: dict[int, list[sqlite3.Row]] = {i: [] for i in ids}
+        with self.lock:
+            for i in range(0, len(ids), 500):
+                chunk = ids[i : i + 500]
+                query = f"SELECT * FROM messages WHERE question_id IN ({','.join('?' * len(chunk))}) ORDER BY id"
+                for row in self.conn.execute(query, chunk):
+                    found[row["question_id"]].append(row)
+        return found
+
+    def add_message(self, question_id: int, role: str, body: str, sources: list | None = None) -> int:
+        with self.lock, self.conn:
+            return self.conn.execute(
+                "INSERT INTO messages (question_id, role, body, sources, created_at) VALUES (?, ?, ?, ?, ?)",
+                (question_id, role, body, json.dumps(sources or []), now()),
+            ).lastrowid

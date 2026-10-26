@@ -27,6 +27,7 @@
         <button role="tab" data-tab="interfaces" id="tab-interfaces">Interfaces <span class="count" id="count-interfaces"></span></button>
         <button role="tab" data-tab="changes" id="tab-changes">Changes <span class="count" id="count-changes"></span></button>
       </nav>
+      <div class="inbox" id="inbox"></div>
       <div class="progress" id="progress">
         <div class="track"><div class="fill" id="progress-fill"></div><div class="fill skim" id="progress-skim"></div><div class="fill hidden" id="progress-hidden"></div></div>
         <span id="progress-label"></span>
@@ -42,6 +43,8 @@
     <section id="panel-changes" role="tabpanel" aria-labelledby="tab-changes" hidden></section>
   </main>
 
+  <aside class="drawer" id="drawer" aria-label="Questions and drafts" hidden></aside>
+
   <footer class="wrap footer">
     Press <kbd>?</kbd> for keyboard shortcuts.
   </footer>
@@ -54,6 +57,9 @@
         <dt><kbd>o</kbd> <kbd>Enter</kbd></dt><dd>Expand or collapse the unit</dd>
         <dt><kbd>r</kbd></dt><dd>Mark reviewed (or not) and move on</dd>
         <dt><kbd>f</kbd></dt><dd>Flag to come back to</dd>
+        <dt><kbd>a</kbd></dt><dd>Ask Claude about the selection, the focused unit, or the PR</dd>
+        <dt><kbd>c</kbd></dt><dd>Comment on the selection, the focused unit, or the PR</dd>
+        <dt><kbd>⌘</kbd> <kbd>↵</kbd></dt><dd>Send a question or save a comment</dd>
         <dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Switch tab</dd>
         <dt><kbd>?</kbd></dt><dd>Show this help</dd>
         <dt><kbd>Esc</kbd></dt><dd>Close</dd>

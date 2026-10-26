@@ -73,7 +73,15 @@ const ui = {
   gaps: new Set(), // expanded runs of unchanged lines
   unfolded: new Set(), // folds shown as lines, by "qualname:start"
   focus: null,
+  composer: null, // {anchor, mode: "comment" | "ask", text}: the open draft of a comment or question
+  mode: "ask", // the composer's last mode
+  editing: new Map(), // comment id -> text being edited
+  followUp: new Map(), // question id -> follow-up being written
+  expanded: new Set(), // resolved questions shown in full
+  streams: new Map(), // question id -> {status, text, sources, notices}: a running answer
+  drawer: null, // "questions" | "drafts": the open side panel
 };
+const sockets = new Map(); // question id -> EventSource
 
 // Helpers
 
@@ -95,12 +103,36 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
-// Text with `backticks` as nodes, the quoted parts as inline code.
+// Text with `backticks` as nodes, the quoted parts as inline code. Code
+// citing a file line, like `pkg/mod.py:42`, links to it.
 function rich(text) {
   return String(text ?? "")
     .split(/`([^`\n]+)`/)
-    .map((part, i) => (i % 2 ? el("code", { class: "inline", text: part }) : part))
+    .map((part, i) => (i % 2 ? citation(part) || el("code", { class: "inline", text: part }) : part))
     .filter((part) => part !== "");
+}
+
+const CITATION = /^([\w.\/-]+\.\w+):(\d+)(?:[-–](\d+))?$/;
+
+// A link for `path:line`: to the unit showing that line when it is part
+// of the PR, else to the file on GitHub at the PR's head.
+function citation(text) {
+  const match = text.match(CITATION);
+  if (!match || !data) return null;
+  const [, path, first] = match;
+  const line = Number(first);
+  const unit = data.units.find((u) => u.path === path && u.diff.some((row) => row[2] === line));
+  const base = data.pr.url ? data.pr.url.replace(/\/pull\/\d+\/?$/, "") : null;
+  const href = base ? `${base}/blob/${data.pr.head_sha}/${path}#L${line}${match[3] ? `-L${match[3]}` : ""}` : null;
+  if (!unit && !href) return null;
+  return el("a", {
+    class: "cite",
+    href: href || "#changes",
+    target: unit ? null : "_blank",
+    rel: "noopener",
+    title: unit ? `Show line ${line} of ${unit.qualname}` : "Open on GitHub",
+    onclick: unit ? (e) => { e.preventDefault(); revealUnit(unit.qualname); showLine(unit.qualname, line); } : null,
+  }, el("code", { class: "inline", text }));
 }
 
 function loadPrefs() {
@@ -256,8 +288,9 @@ function renderWalkthrough() {
   const cards = [statsRow()];
   const stale = summary?.stale && el("p", { class: "notice", text: "This was written for an earlier head. Run /review-pr again to refresh it." });
 
+  cards.push(prThreads());
   if (summary?.walkthrough?.length) {
-    cards.push(el("article", { class: "card story" }, stale, summary.walkthrough.map(storyBlock)));
+    cards.push(el("article", { class: "card story" }, stale, summary.walkthrough.map(storyBlockWithThreads)));
   } else if (summary) {
     cards.push(el("div", { class: "card" }, el("h2", { text: "Summary" }), el("p", { class: "lead" }, rich(summary.overview)), stale));
   } else {
@@ -285,6 +318,48 @@ function renderWalkthrough() {
   for (const diagram of panel.querySelectorAll(".story .diagram")) drawDiagram(diagram, "story-graph");
 }
 
+// A walkthrough block with its button to ask about it, and its threads.
+function storyBlockWithThreads(block, index) {
+  const node = storyBlock(block, index);
+  if (!node) return null;
+  const anchor = { kind: "walkthrough", block: index };
+  return el("div", { class: "story-block", dataset: { block: String(index) } },
+    node,
+    data.agent.available && el("button", {
+      class: "edge-ask",
+      title: "Ask Claude about this part",
+      text: "?",
+      onclick: () => openComposer({ ...anchor, quote: blockQuote(block) }, "ask"),
+    }),
+    threadsAt(placeOf(anchor), "story"),
+  );
+}
+
+function blockQuote(block) {
+  if (block.type === "text") return block.text.length > 600 ? `${block.text.slice(0, 600)}…` : block.text;
+  if (block.type === "code") return `Code of ${block.unit}${block.lines ? `, lines ${block.lines[0]}–${block.lines[1]}` : ""}`;
+  if (block.type === "units") return block.title;
+  return "The architecture diagram";
+}
+
+// Questions and general comments about the whole PR, with a box to ask one.
+function prThreads() {
+  const place = placeOf({ kind: "pr" });
+  const composing = ui.composer && ui.composer.surface === "story" && placeOf(ui.composer.anchor) === place;
+  return el("div", { class: "card pr-threads" },
+    composing ? null : el("div", { class: "ask-bar" },
+      el("button", {
+        class: "ask-input",
+        disabled: !data.agent.available,
+        title: data.agent.available ? "Ask Claude about this PR (a)" : agentMissing(),
+        onclick: () => openComposer({ kind: "pr" }, "ask"),
+      }, "? Ask Claude about this PR…"),
+      el("button", { class: "button", text: "💬 General comment", onclick: () => openComposer({ kind: "pr" }, "comment") }),
+    ),
+    threadsAt(place, "story"),
+  );
+}
+
 function storyBlock(block, index) {
   switch (block.type) {
     case "text": return storyText(block.text);
@@ -298,22 +373,52 @@ function storyBlock(block, index) {
   }
 }
 
-// Text with blank-line paragraphs, "### " headings, "- " lists,
-// **bold** and `code`.
 function storyText(text) {
+  return markdown(text, "story-text");
+}
+
+// Markdown, as walkthroughs and answers use it: blank-line paragraphs,
+// "### " headings, "- " and "1. " lists, fenced code, **bold**, `code`
+// and [links](https://...).
+function markdown(text, className) {
+  const nodes = [];
+  const parts = String(text ?? "").split(/^```([\w+-]*)[^\n]*\n([\s\S]*?)^```[ \t]*$/m);
+  for (let i = 0; i < parts.length; i += 3) {
+    nodes.push(...blocks(parts[i]));
+    if (i + 2 < parts.length) {
+      const code = el("code");
+      highlight(code, parts[i + 2].replace(/\n$/, ""), parts[i + 1] && window.hljs?.getLanguage(parts[i + 1]) ? parts[i + 1] : null);
+      nodes.push(el("pre", { class: "md-code" }, code));
+    }
+  }
+  return el("div", { class: className }, nodes);
+}
+
+function blocks(text) {
   const nodes = [];
   for (const paragraph of text.split(/\n\s*\n/)) {
     const lines = paragraph.split("\n").filter((line) => line.trim());
     if (!lines.length) continue;
-    if (lines.every((line) => /^\s*[-*] /.test(line))) {
-      nodes.push(el("ul", {}, lines.map((line) => el("li", {}, inline(line.replace(/^\s*[-*] /, ""))))));
+    const item = (pattern) => lines.every((line) => pattern.test(line) || /^\s{2,}\S/.test(line)) && pattern.test(lines[0]);
+    const items = (pattern) => {
+      const result = [];
+      for (const line of lines) {
+        if (pattern.test(line)) result.push(line.replace(pattern, ""));
+        else result[result.length - 1] += ` ${line.trim()}`;
+      }
+      return result.map((entry) => el("li", {}, inline(entry)));
+    };
+    if (item(/^\s*[-*] /)) {
+      nodes.push(el("ul", {}, items(/^\s*[-*] /)));
+    } else if (item(/^\s*\d+[.)] /)) {
+      nodes.push(el("ol", {}, items(/^\s*\d+[.)] /)));
     } else if (lines.length === 1 && /^#{1,4} /.test(lines[0])) {
       nodes.push(el("h3", { class: "story-heading" }, inline(lines[0].replace(/^#+ /, ""))));
     } else {
       nodes.push(el("p", {}, inline(lines.join(" "))));
     }
   }
-  return el("div", { class: "story-text" }, nodes);
+  return nodes;
 }
 
 // **bold**, `code` and [links](https://...) in a line of walkthrough text.
@@ -354,7 +459,7 @@ function storyCode(block, index) {
       block.lines && el("span", { class: "muted", text: `lines ${block.lines[0]}–${block.lines[1]}` }),
       block.stale && el("span", { class: "chip changed", text: "changed since this was written" }),
     ),
-    renderDiff(rows, u.language, `story:${index}`, u.folds, u.highlights, keyLines, sections),
+    renderDiff(rows, u.language, `story:${index}`, u.folds, u.highlights, keyLines, sections, u.qualname),
   );
 }
 
@@ -687,11 +792,28 @@ function unitCard(u) {
   if (u.highlights.length) chips.push(el("span", { class: "chip highlight", title: "Lines worth a look", text: `⚠ ${u.highlights.length}` }));
   if (u.folds.length && !compact) chips.push(el("span", { class: "chip", title: "Repetitive lines shown as tables", text: `▤ ${plural(foldedLines(u) || u.folds.length, foldedLines(u) ? "line" : "table")} folded` }));
   if (u.flagged) chips.push(el("span", { class: "chip removed", text: "⚑ flagged" }));
+  chips.push(...threadChips(u));
 
   const toggle = (e) => { if (!e.target.closest("button")) toggleUnit(u.qualname); };
+  const talk = [
+    el("button", {
+      class: "icon-button ask",
+      title: data.agent.available ? "Ask Claude about this unit (a)" : agentMissing(),
+      disabled: !data.agent.available,
+      text: "?",
+      onclick: () => openComposer({ kind: "unit", qualname: u.qualname }, "ask"),
+    }),
+    el("button", {
+      class: "icon-button",
+      title: "Comment on this unit (c)",
+      text: "💬",
+      onclick: () => openComposer({ kind: "unit", qualname: u.qualname }, "comment"),
+    }),
+  ];
   const actions = isHidden(u)
-    ? el("span")
+    ? el("div", { class: "unit-actions" }, talk)
     : el("div", { class: "unit-actions" },
+        talk,
         el("button", {
           class: `icon-button flag ${u.flagged ? "on" : ""}`,
           title: u.flagged ? "Remove flag (f)" : "Flag to come back to (f)",
@@ -718,6 +840,7 @@ function unitCard(u) {
           el("span", { class: "qualname" }, el("span", { class: "symbol", text: symbol })),
           u.highlights.length > 0 && el("span", { class: "chip highlight", text: `⚠ ${u.highlights.length}` }),
           u.flagged && el("span", { class: "chip removed", text: "⚑" }),
+          threadChips(u),
           el("span", { class: "line-summary" }, summary ? rich(summary) : ""),
         ),
         actions,
@@ -755,6 +878,8 @@ function unitBody(u) {
   const body = el("div", { class: "unit-body" });
   if (u.reason) body.append(el("p", { class: "reason" }, el("b", { text: u.attention === "skim" ? "Why skim: " : u.attention === "hide" ? "Why hidden: " : `Why ${tierOf(u)}: ` }), rich(u.reason)));
   if (u.highlights.length) body.append(callouts(u));
+  const threads = threadsAt(placeOf({ kind: "unit", qualname: u.qualname }));
+  if (threads) body.append(threads);
   if (u.old_qualname || u.old_path) {
     body.append(el("p", { class: "moved", text: `${u.status === "renamed" ? "Renamed" : "Moved"} from ${u.old_qualname || u.qualname}${u.old_path ? ` (${u.old_path})` : ""}` }));
   }
@@ -773,8 +898,8 @@ function unitBody(u) {
       ),
     ),
   );
-  if (view === "since") body.append(renderDiff(u.since_review, u.language, u.qualname, [], u.highlights));
-  else body.append(renderDiff(u.diff, u.language, u.qualname, u.folds, u.highlights, view === "key" ? u.key_lines : null, u.sections));
+  if (view === "since") body.append(renderDiff(u.since_review, u.language, u.qualname, [], u.highlights, null, [], null));
+  else body.append(renderDiff(u.diff, u.language, u.qualname, u.folds, u.highlights, view === "key" ? u.key_lines : null, u.sections, u.qualname));
   return body;
 }
 
@@ -813,10 +938,12 @@ function highlight(code, text, language) {
 
 // The diff as tables of lines, with folds as blocks between them. With
 // keyLines ({new, old} skeleton lines), only those, highlighted lines
-// with KEY_CONTEXT lines around them, and folds holding a highlight are
-// shown; the rest collapses into bars.
-function renderDiff(rows, language, key, folds = [], highlights = [], keyLines = null, sections = []) {
-  const wrap = el("div", { class: "diff-wrap" });
+// with KEY_CONTEXT lines around them, folds holding a highlight and
+// lines with comments or questions are shown; the rest collapses into
+// bars. With qualname, lines can be commented on and asked about, and
+// their threads show under them.
+function renderDiff(rows, language, key, folds = [], highlights = [], keyLines = null, sections = [], qualname = key) {
+  const wrap = el("div", { class: "diff-wrap", dataset: qualname ? { qualname } : {} });
   let tbody = el("tbody");
   const flush = () => {
     if (tbody.children.length) wrap.append(el("div", { class: "diff-scroll" }, el("table", { class: "diff" }, tbody)));
@@ -838,11 +965,17 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
     flush();
     wrap.append(el("div", { class: "diff-section" }, rich(text)));
   };
+  // Threads by the line they end on.
+  const threadLines = qualname ? linesWithThreads(qualname) : new Set();
+  const surface = key.startsWith("story:") ? "story" : "changes";
+  const threadsFor = (row) => (qualname && threadLines.has(noteKey(row)) ? threadsAt(`${qualname}|${noteKey(row)}`, surface) : null);
   const emit = (row) => {
     title(row);
-    tbody.append(diffRow(row, kinds, language, key, notes));
+    tbody.append(diffRow(row, kinds, language, key, notes, qualname));
     const note = notes.get(noteKey(row));
     if (note) tbody.append(el("tr", { class: "hl-note" }, el("td", { colspan: "3" }, "⚠ ", rich(note))));
+    const threads = threadsFor(row);
+    if (threads) tbody.append(el("tr", { class: "thread-row" }, el("td", { colspan: "3" }, threads)));
   };
   const renderRange = (from, to, collapse = true) => {
     let i = from;
@@ -852,14 +985,20 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
         title(rows[i]);
         flush();
         wrap.append(foldView(fold, key, notes));
+        const start = i;
         while (i < to && rows[i][2] !== null && rows[i][2] <= fold.end) i++;
+        // Threads on folded lines show under the fold.
+        for (const row of rows.slice(start, i)) {
+          const threads = threadsFor(row);
+          if (threads) wrap.append(el("div", { class: "fold-threads" }, threads));
+        }
         continue;
       }
       if (rows[i][0] === " ") {
         let end = i;
         while (end < to && rows[end][0] === " " && !foldAt.has(rows[end][2])) end++;
         const gapKey = `${key}:${i}`;
-        const highlighted = rows.slice(i, end).some((row) => notes.has(noteKey(row)) || titles.has(lineOf(row)));
+        const highlighted = rows.slice(i, end).some((row) => notes.has(noteKey(row)) || titles.has(lineOf(row)) || threadLines.has(noteKey(row)));
         if (collapse && end - i >= GAP_MIN && !ui.gaps.has(gapKey) && !highlighted) {
           const keepStart = i === from ? 0 : GAP_KEEP;
           const keepEnd = end === to || foldAt.has(rows[end]?.[2]) ? 0 : GAP_KEEP;
@@ -887,7 +1026,7 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
   const shown = new Set();
   rows.forEach((row, i) => {
     if (row[0] === "-" ? keyOld.has(row[1]) : keyNew.has(row[2])) shown.add(i);
-    if (titles.has(lineOf(row))) shown.add(i);
+    if (titles.has(lineOf(row)) || threadLines.has(noteKey(row))) shown.add(i);
   });
   // Code with a skeleton needs no context around highlights; other files do.
   const context = keyNew.size || keyOld.size ? 0 : KEY_CONTEXT;
@@ -921,16 +1060,31 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
   return wrap;
 }
 
-function diffRow(row, kinds, language, key, notes) {
+function diffRow(row, kinds, language, key, notes, qualname) {
   const [kind, oldLine, newLine, text] = row;
   const line = kind === "-" ? oldLine : newLine;
+  const side = kind === "-" ? "old" : "new";
   const code = el("code");
   highlight(code, text, language);
-  const noted = notes.has(kind === "-" ? `old:${oldLine}` : `new:${newLine}`);
-  return el("tr", { class: `${kinds[kind]} ${noted ? "hl" : ""}`, id: line != null ? `line-${key}-${line}` : null },
+  const noted = notes.has(`${side}:${line}`);
+  // Click to comment or ask about the line; shift-click a second line
+  // for a range.
+  const add = qualname && line != null && el("button", {
+    class: "line-add",
+    title: "Comment or ask about this line (shift-click another line for a range)",
+    "aria-label": `Comment or ask about line ${line}`,
+    text: "+",
+    onclick: (e) => lineClicked(qualname, side, line, e.shiftKey, surfaceOf(e.target)),
+  });
+  const selected = qualname && line != null && inComposerRange(qualname, side, line);
+  return el("tr", {
+    class: `${kinds[kind]} ${noted ? "hl" : ""} ${selected ? "selected" : ""}`,
+    id: line != null ? `line-${key}-${line}` : null,
+    dataset: line != null ? { side, line: String(line) } : {},
+  },
     el("td", { class: "ln", text: oldLine ?? "" }),
     el("td", { class: "ln", text: newLine ?? "" }),
-    el("td", { class: "code" }, el("span", { class: "sign", text: kind === " " ? "" : kind === "-" ? "−" : "+" }), code),
+    el("td", { class: "code" }, add, el("span", { class: "sign", text: kind === " " ? "" : kind === "-" ? "−" : "+" }), code),
   );
 }
 
@@ -980,6 +1134,641 @@ function foldView(fold, key, notes) {
       ),
     ),
   );
+}
+
+// Comments and questions
+//
+// Both attach to an anchor: a line or range of a unit's diff, a unit, a
+// walkthrough block or the whole PR. A thread shows under its anchor; a
+// "place" names that spot: "qualname|side:line" for the line a thread
+// ends on, "qualname|unit", "wt|block" or "pr".
+
+const agentMissing = () => `${data.agent.command} isn't on PATH, so questions can't be asked`;
+
+function placeOf(anchor) {
+  if (anchor.state === "orphaned") return "orphaned";
+  switch (anchor.kind) {
+    case "line":
+    case "range":
+      return `${anchor.qualname}|${anchor.end_side || anchor.side}:${anchor.end_line ?? anchor.line}`;
+    case "unit": return `${anchor.qualname}|unit`;
+    case "walkthrough": return `wt|${anchor.block}`;
+    default: return "pr";
+  }
+}
+
+// A resolved anchor as the page sends it back to the server.
+function anchorInput(anchor) {
+  const input = { kind: anchor.kind, quote: anchor.quote || undefined };
+  if (anchor.qualname) input.qualname = anchor.qualname;
+  if (anchor.kind === "line" || anchor.kind === "range") Object.assign(input, { side: anchor.side, line: anchor.line });
+  if (anchor.kind === "range") Object.assign(input, { end_side: anchor.end_side, end_line: anchor.end_line });
+  if (anchor.kind === "walkthrough") input.block = anchor.block;
+  return input;
+}
+
+function anchorLabel(anchor, withUnit = false) {
+  const unit = anchor.qualname && data.units.find((u) => u.qualname === anchor.qualname);
+  const name = unit ? shortName(unit) : anchor.qualname;
+  const removed = anchor.side === "old" ? " (removed)" : "";
+  let where;
+  switch (anchor.kind) {
+    case "line": where = `line ${anchor.line}${removed}`; break;
+    case "range": where = `lines ${anchor.line}–${anchor.end_line}${removed}`; break;
+    case "unit": return name || "a unit";
+    case "walkthrough": return `the walkthrough, block ${anchor.block + 1}`;
+    default: return "the whole PR";
+  }
+  return withUnit && name ? `${name} · ${where}` : where;
+}
+
+function itemsAt(place) {
+  const items = [
+    ...data.questions.filter((q) => placeOf(q.anchor) === place).map((q) => ({ question: q, at: q.created_at })),
+    ...data.comments.filter((c) => placeOf(c.anchor) === place).map((c) => ({ comment: c, at: c.created_at })),
+  ];
+  return items.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+}
+
+// The threads at a place, and the composer when it was opened there on
+// this surface ("story" for the walkthrough, "changes" for unit cards).
+function threadsAt(place, surface = "changes") {
+  const items = itemsAt(place);
+  const composing = ui.composer && ui.composer.surface === surface && placeOf(ui.composer.anchor) === place;
+  if (!items.length && !composing) return null;
+  return el("div", { class: "threads" },
+    items.map((item) => (item.question ? questionCard(item.question) : commentCard(item.comment))),
+    composing && composerView(),
+  );
+}
+
+// The "side:line" keys of a unit's lines that threads end on.
+function linesWithThreads(qualname) {
+  const keys = new Set();
+  const add = (anchor) => {
+    if (anchor.qualname !== qualname || !["line", "range"].includes(anchor.kind) || anchor.state === "orphaned") return;
+    keys.add(placeOf(anchor).slice(qualname.length + 1));
+  };
+  for (const q of data.questions) add(q.anchor);
+  for (const c of data.comments) add(c.anchor);
+  if (ui.composer) add(ui.composer.anchor);
+  return keys;
+}
+
+function threadChips(u) {
+  const questions = data.questions.filter((q) => q.anchor.qualname === u.qualname).length;
+  const drafts = data.comments.filter((c) => c.anchor.qualname === u.qualname).length;
+  return [
+    questions > 0 && el("span", { class: "chip ask", title: plural(questions, "question"), text: `? ${questions}` }),
+    drafts > 0 && el("span", { class: "chip draft", title: plural(drafts, "draft comment"), text: `💬 ${drafts}` }),
+  ].filter(Boolean);
+}
+
+// Index of a line in a unit's diff rows; unchanged lines are on the new side.
+function rowIndex(u, side, line) {
+  return u.diff.findIndex((row) => (side === "old" ? row[0] === "-" && row[1] === line : row[0] !== "-" && row[2] === line));
+}
+
+function inComposerRange(qualname, side, line) {
+  const anchor = ui.composer?.anchor;
+  if (!anchor || anchor.qualname !== qualname || !["line", "range"].includes(anchor.kind)) return false;
+  const u = data.units.find((x) => x.qualname === qualname);
+  const i = rowIndex(u, side, line);
+  const a = rowIndex(u, anchor.side, anchor.line);
+  const b = anchor.kind === "range" ? rowIndex(u, anchor.end_side, anchor.end_line) : a;
+  return i >= Math.min(a, b) && i <= Math.max(a, b);
+}
+
+function surfaceOf(node) {
+  return node?.closest?.("#panel-walkthrough") ? "story" : "changes";
+}
+
+function lineClicked(qualname, side, line, extend, surface) {
+  const current = ui.composer?.anchor;
+  if (extend && current && current.qualname === qualname && ["line", "range"].includes(current.kind)) {
+    // Extend the open composer's line to a range, in diff order.
+    const u = data.units.find((x) => x.qualname === qualname);
+    let start = { side: current.side, line: current.line };
+    let end = { side, line };
+    if (rowIndex(u, end.side, end.line) < rowIndex(u, start.side, start.line)) [start, end] = [end, start];
+    const anchor = rowIndex(u, start.side, start.line) === rowIndex(u, end.side, end.line)
+      ? { kind: "line", qualname, ...start }
+      : { kind: "range", qualname, ...start, end_side: end.side, end_line: end.line };
+    return openComposer(anchor, ui.composer.mode, ui.composer.surface, ui.composer.text);
+  }
+  openComposer({ kind: "line", qualname, side, line }, ui.mode, surface);
+}
+
+function openComposer(anchor, mode, surface = ui.tab === "walkthrough" ? "story" : "changes", text = null) {
+  if (anchor.kind === "walkthrough") mode = "ask";
+  if (mode === "ask" && !data.agent.available) {
+    if (anchor.kind === "walkthrough") return toast(agentMissing());
+    mode = "comment";
+  }
+  const previous = ui.composer;
+  ui.composer = { anchor, mode, surface, text: text ?? (previous && placeOf(previous.anchor) === placeOf(anchor) ? previous.text : "") };
+  if (anchor.qualname && surface === "changes") {
+    ui.open.add(anchor.qualname);
+    if (ui.tab !== "changes") return revealUnit(anchor.qualname, () => afterComposerChange(anchor, previous));
+  }
+  afterComposerChange(anchor, previous);
+}
+
+function afterComposerChange(anchor, previous) {
+  if (previous) refreshFor(previous.anchor);
+  refreshFor(anchor);
+  focusComposer();
+}
+
+function focusComposer() {
+  const area = document.querySelector(`#panel-${ui.tab} .composer textarea`);
+  if (!area) return;
+  area.focus({ preventScroll: true });
+  area.setSelectionRange(area.value.length, area.value.length);
+  area.closest(".composer").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function closeComposer() {
+  const previous = ui.composer;
+  ui.composer = null;
+  if (previous) refreshFor(previous.anchor);
+}
+
+function composerView() {
+  const composer = ui.composer;
+  const { anchor, mode } = composer;
+  const canComment = anchor.kind !== "walkthrough";
+  const area = el("textarea", {
+    rows: "3",
+    placeholder: mode === "ask" ? "Ask Claude: why, what if, where else…" : "Write a comment (Markdown). It's saved as a draft.",
+    oninput: (e) => (composer.text = e.target.value),
+    onkeydown: (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitComposer(); }
+      if (e.key === "Escape") { e.preventDefault(); closeComposer(); }
+    },
+  });
+  area.value = composer.text;
+  const setMode = (next) => {
+    composer.mode = ui.mode = next;
+    refreshFor(anchor);
+    focusComposer();
+  };
+  return el("div", { class: `composer ${mode}` },
+    el("div", { class: "composer-head" },
+      el("div", { class: "segmented small", role: "group", "aria-label": "Comment or ask" },
+        canComment && el("button", { "aria-pressed": String(mode === "comment"), onclick: () => setMode("comment") }, "💬 Comment"),
+        el("button", {
+          "aria-pressed": String(mode === "ask"),
+          disabled: !data.agent.available,
+          title: data.agent.available ? null : agentMissing(),
+          onclick: () => setMode("ask"),
+        }, "? Ask Claude"),
+      ),
+      el("span", { class: "muted" }, mode === "ask" ? "about " : "on ", anchorLabel(anchor)),
+    ),
+    anchor.kind === "walkthrough" && anchor.quote && el("blockquote", { class: "composer-quote", text: anchor.quote }),
+    area,
+    el("div", { class: "composer-foot" },
+      el("span", { class: "hint" },
+        mode === "ask" ? "Private: questions are never posted. " : "",
+        ["line", "range"].includes(anchor.kind) ? "Shift-click another line for a range. " : "",
+        el("kbd", { text: "⌘↵" }), " to send, ", el("kbd", { text: "Esc" }), " to cancel",
+      ),
+      el("button", { class: "button", text: "Cancel", onclick: closeComposer }),
+      el("button", { class: "button primary", text: mode === "ask" ? "Ask" : "Save draft", onclick: submitComposer }),
+    ),
+  );
+}
+
+async function submitComposer() {
+  const composer = ui.composer;
+  const text = composer?.text.trim();
+  if (!text) return;
+  try {
+    if (composer.mode === "ask") {
+      const question = await api("POST", "/api/questions", { anchor: anchorInput(composer.anchor), text });
+      data.questions.push(question);
+      listen(question.id);
+    } else {
+      data.comments.push(await api("POST", "/api/comments", { anchor: anchorInput(composer.anchor), body: text }));
+    }
+    ui.composer = null;
+    refreshFor(composer.anchor);
+  } catch (error) {
+    toast(`Couldn't send: ${error.message}`);
+  }
+}
+
+// Re-render everything that shows threads at an anchor.
+function refreshFor(anchor) {
+  if (anchor.qualname) {
+    rerenderUnit(anchor.qualname);
+    const story = data.summary?.walkthrough || [];
+    if (story.some((b) => b.type === "code" && b.unit === anchor.qualname)) renderWalkthrough();
+  }
+  if (["walkthrough", "pr"].includes(anchor.kind) || anchor.state === "orphaned") renderWalkthrough();
+  renderInbox();
+  if (ui.drawer) renderDrawer();
+}
+
+const STATUS_LABELS = { queued: "Waiting for a free agent…", running: "Thinking…", failed: "Failed", cancelled: "Cancelled" };
+
+function anchorChips(anchor) {
+  return [
+    anchor.state === "stale" && el("span", { class: "chip changed", title: "The code or walkthrough changed since", text: "changed since" }),
+    anchor.state === "orphaned" && el("span", { class: "chip removed", title: "Its unit is no longer part of the PR", text: "orphaned" }),
+  ];
+}
+
+function questionCard(q, inDrawer = false) {
+  const running = q.status === "queued" || q.status === "running";
+  const collapsed = q.resolved && !ui.expanded.has(q.id) && !running;
+  const first = q.messages.find((m) => m.role === "you");
+  const answer = [...q.messages].reverse().find((m) => m.role === "agent");
+  const head = el("div", { class: "thread-head" },
+    el("span", { class: "thread-icon", text: "?" }),
+    inDrawer
+      ? el("a", { href: "#", class: "thread-where", onclick: (e) => { e.preventDefault(); jumpTo(q.anchor); } }, anchorLabel(q.anchor, true))
+      : el("span", { class: "thread-where", text: "Question" }),
+    anchorChips(q.anchor),
+    q.resolved && el("span", { class: "chip", text: "resolved" }),
+    ["failed", "cancelled"].includes(q.status) && el("span", { class: "chip removed", text: q.status }),
+    el("span", { class: "spacer" }),
+    running && el("button", { class: "link-button", text: "Stop", onclick: () => cancelQuestion(q) }),
+    !running && el("button", { class: "link-button", text: q.resolved ? "Reopen" : "Resolve", onclick: () => resolveQuestion(q, !q.resolved) }),
+    el("button", { class: "link-button danger", title: "Delete the thread", text: "Delete", onclick: () => deleteQuestion(q) }),
+  );
+  const card = el("div", { class: `thread question ${q.resolved ? "resolved" : ""}`, dataset: { thread: `q:${q.id}` } }, head);
+  if (collapsed) {
+    card.append(el("button", { class: "thread-collapsed", onclick: () => { ui.expanded.add(q.id); refreshFor(q.anchor); } },
+      first ? first.body : "", answer ? el("span", { class: "muted", text: " · answered" }) : null));
+    return card;
+  }
+  if (inDrawer && q.anchor.quote) card.append(el("blockquote", { class: "composer-quote", text: q.anchor.quote }));
+  for (const message of q.messages) card.append(messageView(message));
+  if (running) card.append(streamView(q.id));
+  if (q.error && !running) card.append(el("p", { class: "thread-error", text: q.error }));
+
+  const followUp = ui.followUp.get(q.id);
+  if (followUp !== undefined && !running) {
+    const area = el("textarea", {
+      rows: "2",
+      placeholder: "Follow up…",
+      oninput: (e) => ui.followUp.set(q.id, e.target.value),
+      onkeydown: (e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendFollowUp(q); }
+        if (e.key === "Escape") { e.preventDefault(); ui.followUp.delete(q.id); refreshFor(q.anchor); }
+      },
+    });
+    area.value = followUp;
+    card.append(el("div", { class: "follow-up" }, area,
+      el("div", { class: "composer-foot" },
+        el("span", { class: "hint" }, el("kbd", { text: "⌘↵" }), " to send"),
+        el("button", { class: "button", text: "Cancel", onclick: () => { ui.followUp.delete(q.id); refreshFor(q.anchor); } }),
+        el("button", { class: "button primary", text: "Ask", onclick: () => sendFollowUp(q) }),
+      ),
+    ));
+  } else if (!running) {
+    card.append(el("div", { class: "thread-actions" },
+      data.agent.available && el("button", {
+        class: "button small",
+        text: "Follow up",
+        onclick: () => {
+          ui.followUp.set(q.id, "");
+          refreshFor(q.anchor);
+          document.querySelector(`[data-thread="q:${q.id}"] .follow-up textarea`)?.focus();
+        },
+      }),
+      answer && el("button", { class: "button small", title: "Start a comment draft from this answer", text: "→ Draft comment from this", onclick: () => draftFromAnswer(q, answer) }),
+    ));
+  }
+  return card;
+}
+
+function messageView(message) {
+  if (message.role === "you") return el("div", { class: "msg you" }, el("span", { class: "who", text: "You" }), markdown(message.body, "msg-body"));
+  return el("div", { class: "msg agent" },
+    el("span", { class: "who", text: "Claude" }),
+    markdown(message.body, "msg-body"),
+    sourcesView(message.sources),
+  );
+}
+
+function sourcesView(sources) {
+  if (!sources?.length) return null;
+  const items = sources.map((s) => {
+    if (s.kind === "url") {
+      let label = s.url;
+      try { const url = new URL(s.url); label = url.host + url.pathname.replace(/\/$/, ""); } catch { /* keep the raw URL */ }
+      return el("a", { href: s.url, target: "_blank", rel: "noopener", title: s.url, text: label });
+    }
+    if (s.kind === "search") return el("span", { class: "source-search", title: "Web search", text: `🔍 ${s.query}` });
+    return citation(s.path) || el("code", { class: "inline", text: s.path });
+  });
+  return el("div", { class: "sources" }, el("span", { class: "muted", text: "Sources: " }), items);
+}
+
+function streamView(id) {
+  const stream = ui.streams.get(id) || { status: STATUS_LABELS.queued, text: "", sources: [], notices: [] };
+  return el("div", { class: "msg agent streaming", dataset: { stream: String(id) } },
+    el("span", { class: "who", text: "Claude" }),
+    el("div", { class: "stream-status" }, el("span", { class: "spinner" }), stream.status),
+    stream.notices.map((n) => el("p", { class: "notice", text: n })),
+    stream.text && markdown(stream.text, "msg-body"),
+    sourcesView(stream.sources),
+  );
+}
+
+function updateStream(id) {
+  for (const node of document.querySelectorAll(`[data-stream="${id}"]`)) node.replaceWith(streamView(id));
+  renderInbox();
+}
+
+// Follow a running answer through server-sent events.
+function listen(id) {
+  if (sockets.has(id)) return;
+  const source = new EventSource(`/api/questions/${id}/events?token=${encodeURIComponent(TOKEN)}`);
+  sockets.set(id, source);
+  // The server replays the run's events from the start on each connection.
+  source.onopen = () => ui.streams.set(id, { status: STATUS_LABELS.queued, text: "", sources: [], notices: [] });
+  source.onmessage = (message) => {
+    const event = JSON.parse(message.data);
+    const stream = ui.streams.get(id) || { status: "", text: "", sources: [], notices: [] };
+    ui.streams.set(id, stream);
+    switch (event.type) {
+      case "status": stream.status = event.text; break;
+      case "text":
+        if (event.reset) stream.text = "";
+        stream.text += event.text;
+        if (event.text.trim()) stream.status = "Writing…";
+        break;
+      case "source": stream.sources.push(event.source); break;
+      case "notice": stream.notices.push(event.text); break;
+      case "done":
+      case "error":
+        source.close();
+        sockets.delete(id);
+        ui.streams.delete(id);
+        if (event.question) replaceQuestion(event.question);
+        return;
+      default: return;
+    }
+    updateStream(id);
+  };
+}
+
+function replaceQuestion(question) {
+  const index = data.questions.findIndex((q) => q.id === question.id);
+  if (index === -1) return;
+  data.questions[index] = question;
+  refreshFor(question.anchor);
+}
+
+async function sendFollowUp(q) {
+  const text = (ui.followUp.get(q.id) || "").trim();
+  if (!text) return;
+  try {
+    const question = await api("POST", `/api/questions/${q.id}/messages`, { text });
+    ui.followUp.delete(q.id);
+    replaceQuestion(question);
+    listen(q.id);
+  } catch (error) {
+    toast(`Couldn't ask: ${error.message}`);
+  }
+}
+
+async function cancelQuestion(q) {
+  try {
+    await api("POST", `/api/questions/${q.id}/cancel`);
+  } catch (error) {
+    toast(`Couldn't stop it: ${error.message}`);
+  }
+}
+
+async function resolveQuestion(q, resolved) {
+  try {
+    ui.expanded.delete(q.id);
+    replaceQuestion(await api("PATCH", `/api/questions/${q.id}`, { resolved }));
+  } catch (error) {
+    toast(`Couldn't save: ${error.message}`);
+  }
+}
+
+async function deleteQuestion(q) {
+  if (!confirm("Delete this question and its answers?")) return;
+  try {
+    await api("DELETE", `/api/questions/${q.id}`);
+    sockets.get(q.id)?.close();
+    sockets.delete(q.id);
+    data.questions = data.questions.filter((x) => x.id !== q.id);
+    refreshFor(q.anchor);
+  } catch (error) {
+    toast(`Couldn't delete: ${error.message}`);
+  }
+}
+
+// A comment draft at the question's anchor, with the answer as its body.
+// The walkthrough isn't on GitHub, so such a draft goes to the PR and
+// quotes what was asked about.
+async function draftFromAnswer(q, answer) {
+  let anchor = anchorInput(q.anchor);
+  let body = answer.body;
+  if (q.anchor.kind === "walkthrough" || q.anchor.state === "orphaned") {
+    anchor = { kind: "pr" };
+    if (q.anchor.quote) body = `${q.anchor.quote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n${body}`;
+  }
+  try {
+    const comment = await api("POST", "/api/comments", { anchor, body, question_id: q.id });
+    data.comments.push(comment);
+    ui.editing.set(comment.id, comment.body);
+    refreshFor(comment.anchor);
+    const area = document.querySelector(`[data-thread="c:${comment.id}"] textarea`);
+    area?.focus();
+    area?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } catch (error) {
+    toast(`Couldn't create the draft: ${error.message}`);
+  }
+}
+
+function commentCard(c, inDrawer = false) {
+  const editing = ui.editing.get(c.id);
+  const head = el("div", { class: "thread-head" },
+    el("span", { class: "thread-icon", text: "💬" }),
+    inDrawer
+      ? el("a", { href: "#", class: "thread-where", onclick: (e) => { e.preventDefault(); jumpTo(c.anchor); } }, anchorLabel(c.anchor, true))
+      : el("span", { class: "thread-where", text: c.state === "draft" ? "Draft comment" : "Posted comment" }),
+    anchorChips(c.anchor),
+    c.question_id && el("span", { class: "chip ask", text: "from a question" }),
+    el("span", { class: "spacer" }),
+    c.state === "draft" && editing === undefined && el("button", { class: "link-button", text: "Edit", onclick: () => { ui.editing.set(c.id, c.body); refreshFor(c.anchor); } }),
+    c.state === "draft" && el("button", { class: "link-button danger", text: "Delete", onclick: () => deleteComment(c) }),
+  );
+  const card = el("div", { class: `thread comment ${c.state}`, dataset: { thread: `c:${c.id}` } }, head);
+  if (editing === undefined) {
+    card.append(markdown(c.body, "msg-body"));
+    return card;
+  }
+  const area = el("textarea", {
+    rows: String(Math.min(12, Math.max(3, editing.split("\n").length + 1))),
+    oninput: (e) => ui.editing.set(c.id, e.target.value),
+    onkeydown: (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveComment(c); }
+      if (e.key === "Escape") { e.preventDefault(); ui.editing.delete(c.id); refreshFor(c.anchor); }
+    },
+  });
+  area.value = editing;
+  card.append(area,
+    el("div", { class: "composer-foot" },
+      el("span", { class: "hint" }, el("kbd", { text: "⌘↵" }), " to save"),
+      el("button", { class: "button", text: "Cancel", onclick: () => { ui.editing.delete(c.id); refreshFor(c.anchor); } }),
+      el("button", { class: "button primary", text: "Save draft", onclick: () => saveComment(c) }),
+    ),
+  );
+  return card;
+}
+
+async function saveComment(c) {
+  const body = (ui.editing.get(c.id) || "").trim();
+  if (!body) return toast("A comment can't be empty; delete it instead.");
+  try {
+    const updated = await api("PATCH", `/api/comments/${c.id}`, { body });
+    ui.editing.delete(c.id);
+    data.comments[data.comments.findIndex((x) => x.id === c.id)] = updated;
+    refreshFor(updated.anchor);
+  } catch (error) {
+    toast(`Couldn't save: ${error.message}`);
+  }
+}
+
+async function deleteComment(c) {
+  if (!confirm("Delete this draft comment?")) return;
+  try {
+    await api("DELETE", `/api/comments/${c.id}`);
+    ui.editing.delete(c.id);
+    data.comments = data.comments.filter((x) => x.id !== c.id);
+    refreshFor(c.anchor);
+  } catch (error) {
+    toast(`Couldn't delete: ${error.message}`);
+  }
+}
+
+function jumpTo(anchor) {
+  if (anchor.state === "orphaned") return toast("Its unit is no longer part of this PR.");
+  if (anchor.kind === "line" || anchor.kind === "range") {
+    revealUnit(anchor.qualname, () => showLine(anchor.qualname, anchor.end_line ?? anchor.line));
+  } else if (anchor.kind === "unit") {
+    revealUnit(anchor.qualname);
+  } else {
+    selectTab("walkthrough");
+    const target = anchor.kind === "walkthrough"
+      ? document.querySelector(`#panel-walkthrough [data-block="${anchor.block}"]`)
+      : document.querySelector("#panel-walkthrough .pr-threads");
+    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+}
+
+// The bar's Questions and Drafts buttons, and the side panel they open.
+
+function renderInbox() {
+  const running = data.questions.filter((q) => q.status === "queued" || q.status === "running").length;
+  const open = data.questions.filter((q) => !q.resolved).length;
+  const drafts = data.comments.filter((c) => c.state === "draft").length;
+  const button = (key, label, count, extra) =>
+    el("button", {
+      class: `inbox-button ${ui.drawer === key ? "on" : ""}`,
+      "aria-pressed": String(ui.drawer === key),
+      onclick: () => { ui.drawer = ui.drawer === key ? null : key; renderDrawer(); renderInbox(); },
+    }, label, el("span", { class: "count", text: count || "" }), extra);
+  document.getElementById("inbox").replaceChildren(
+    button("questions", "Questions", open, running > 0 && el("span", { class: "running", title: `${running} running` }, el("span", { class: "spinner" }), running)),
+    button("drafts", "Drafts", drafts),
+  );
+}
+
+function renderDrawer() {
+  const drawer = document.getElementById("drawer");
+  document.body.classList.toggle("with-drawer", Boolean(ui.drawer));
+  if (!ui.drawer) {
+    drawer.hidden = true;
+    return;
+  }
+  const questions = [...data.questions].sort((a, b) => Number(a.resolved) - Number(b.resolved) || (a.created_at < b.created_at ? 1 : -1));
+  const drafts = data.comments.filter((c) => c.state === "draft");
+  const list = ui.drawer === "questions"
+    ? questions.map((q) => questionCard(q, true))
+    : drafts.map((c) => commentCard(c, true));
+  const empty = ui.drawer === "questions"
+    ? "No questions yet. Select code or text, or hover a line, and ask Claude about it."
+    : "No draft comments yet. Hover a line and click +, or select lines, to write one.";
+  drawer.replaceChildren(
+    el("div", { class: "drawer-head" },
+      el("div", { class: "segmented small", role: "group" },
+        el("button", { "aria-pressed": String(ui.drawer === "questions"), onclick: () => { ui.drawer = "questions"; renderDrawer(); renderInbox(); } }, `Questions (${questions.length})`),
+        el("button", { "aria-pressed": String(ui.drawer === "drafts"), onclick: () => { ui.drawer = "drafts"; renderDrawer(); renderInbox(); } }, `Drafts (${drafts.length})`),
+      ),
+      el("button", { class: "icon-button", title: "Close", text: "✕", onclick: () => { ui.drawer = null; renderDrawer(); renderInbox(); } }),
+    ),
+    ui.drawer === "drafts" && drafts.length > 0 && el("p", { class: "drawer-note", text: "Drafts stay local. Posting them as a GitHub review comes next." }),
+    el("div", { class: "drawer-body" }, list.length ? list : el("p", { class: "empty", text: empty })),
+  );
+  drawer.hidden = false;
+}
+
+// Selecting code in a diff, or text in the walkthrough, offers to comment
+// on it or ask about it.
+
+let selectionAnchor = null;
+
+function anchorFromSelection() {
+  const selection = window.getSelection();
+  const text = selection?.toString().trim();
+  if (!text || !selection.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  const node = (n) => (n.nodeType === 1 ? n : n.parentElement);
+  const start = node(range.startContainer), end = node(range.endContainer);
+  if (start.closest(".threads, .composer, input, textarea") || end.closest(".threads, .composer")) return null;
+  const diff = start.closest(".diff-wrap[data-qualname]");
+  if (diff && diff === end.closest(".diff-wrap[data-qualname]")) {
+    const first = start.closest("tr[data-line]") || [...diff.querySelectorAll("tr[data-line]")].find((tr) => range.intersectsNode(tr));
+    const last = end.closest("tr[data-line]") || [...diff.querySelectorAll("tr[data-line]")].reverse().find((tr) => range.intersectsNode(tr));
+    if (!first || !last) return null;
+    const qualname = diff.dataset.qualname;
+    const a = { side: first.dataset.side, line: Number(first.dataset.line) };
+    const b = { side: last.dataset.side, line: Number(last.dataset.line) };
+    const anchor = first === last
+      ? { kind: "line", qualname, ...a }
+      : { kind: "range", qualname, ...a, end_side: b.side, end_line: b.line };
+    return { anchor: { ...anchor, quote: text }, rect: range.getBoundingClientRect(), surface: surfaceOf(diff) };
+  }
+  const block = start.closest(".story-block");
+  if (block && block === end.closest(".story-block")) {
+    return { anchor: { kind: "walkthrough", block: Number(block.dataset.block), quote: text }, rect: range.getBoundingClientRect(), surface: "story" };
+  }
+  return null;
+}
+
+function onSelection() {
+  document.getElementById("select-actions")?.remove();
+  selectionAnchor = anchorFromSelection();
+  if (!selectionAnchor) return;
+  const { anchor, rect, surface } = selectionAnchor;
+  const pick = (mode) => (e) => {
+    e.preventDefault();
+    document.getElementById("select-actions")?.remove();
+    window.getSelection()?.removeAllRanges();
+    selectionAnchor = null;
+    openComposer(anchor, mode, surface);
+  };
+  const bar = el("div", { id: "select-actions", class: "select-actions", style: { left: `${window.scrollX + rect.left}px`, top: `${window.scrollY + rect.bottom + 6}px` } },
+    anchor.kind !== "walkthrough" && el("button", { onmousedown: (e) => e.preventDefault(), onclick: pick("comment"), title: "Comment on the selection (c)" }, "💬 Comment"),
+    el("button", {
+      onmousedown: (e) => e.preventDefault(),
+      onclick: pick("ask"),
+      disabled: !data.agent.available,
+      title: data.agent.available ? "Ask Claude about the selection (a)" : agentMissing(),
+    }, "? Ask Claude"),
+  );
+  document.body.append(bar);
 }
 
 // State changes
@@ -1071,7 +1860,7 @@ function revealTier(key) {
   (document.getElementById(`tier-${key}`) ?? document.getElementById(`group-${key}`))?.scrollIntoView({ block: "start" });
 }
 
-function revealUnit(qualname) {
+function revealUnit(qualname, then = null) {
   const unit = data.units.find((u) => u.qualname === qualname);
   if (!unit) return;
   if (!matchesFilter(unit)) ui.filter = "all";
@@ -1081,6 +1870,7 @@ function revealUnit(qualname) {
   renderChanges();
   selectTab("changes");
   setFocus(qualname);
+  then?.();
 }
 
 function unitNodes() {
@@ -1133,6 +1923,28 @@ function onKey(event) {
     selectTab(TABS[Number(event.key) - 1]);
     return;
   }
+  if (event.key === "Escape" && ui.drawer) {
+    ui.drawer = null;
+    renderDrawer();
+    renderInbox();
+    return;
+  }
+  if (event.key === "a" || event.key === "c") {
+    const mode = event.key === "a" ? "ask" : "comment";
+    const selected = anchorFromSelection();
+    if (selected) {
+      document.getElementById("select-actions")?.remove();
+      openComposer(selected.anchor, mode, selected.surface);
+    } else if (ui.tab === "changes" && focusedUnit()) {
+      openComposer({ kind: "unit", qualname: focusedUnit().qualname }, mode, "changes");
+    } else if (ui.tab === "walkthrough") {
+      openComposer({ kind: "pr" }, mode, "story");
+    } else {
+      return;
+    }
+    event.preventDefault();
+    return;
+  }
   if (ui.tab !== "changes") return;
   const unit = focusedUnit();
   switch (event.key) {
@@ -1163,6 +1975,10 @@ async function main() {
   document.getElementById("help-close").addEventListener("click", () => (document.getElementById("help").hidden = true));
   document.getElementById("help").addEventListener("click", (e) => { if (e.target.id === "help") e.target.hidden = true; });
   document.addEventListener("keydown", onKey);
+  document.addEventListener("mouseup", () => setTimeout(onSelection, 0));
+  document.addEventListener("mousedown", (e) => {
+    if (!e.target.closest("#select-actions")) document.getElementById("select-actions")?.remove();
+  });
   window.addEventListener("hashchange", () => { if (data) selectTab(location.hash.slice(1)); });
 
   try {
@@ -1176,7 +1992,10 @@ async function main() {
   const worth = data.units.filter((u) => !isHidden(u) && u.state !== "seen" && OPEN_BY_DEFAULT.has(sectionOf(u)));
   for (const u of worth.slice(0, MAX_AUTO_OPEN)) ui.open.add(u.qualname);
 
+  for (const q of data.questions) if (q.status === "queued" || q.status === "running") listen(q.id);
+
   renderHeader();
+  renderInbox();
   renderProgress();
   renderBanner();
   renderWalkthrough();
