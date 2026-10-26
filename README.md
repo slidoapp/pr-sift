@@ -14,9 +14,20 @@ the GitHub CLI `gh`, logged in.
 
 ```bash
 uv tool install --editable .
-mkdir -p ~/.claude/skills
-ln -s "$PWD/skills/review-pr" ~/.claude/skills/review-pr
 ```
+
+Skills live in `~/.agents/skills`, with a link per skill from each
+agent's skills folder:
+
+```bash
+mkdir -p ~/.agents/skills ~/.claude/skills ~/.codex/skills
+ln -s "$PWD/skills/review-pr" ~/.agents/skills/review-pr
+ln -s ../../.agents/skills/review-pr ~/.claude/skills/review-pr
+ln -s ../../.agents/skills/review-pr ~/.codex/skills/review-pr
+```
+
+Both installs point at this checkout, so changes here take effect
+without reinstalling.
 
 ## Use
 
