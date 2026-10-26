@@ -1,11 +1,11 @@
 """Run the deterministic analysis of a change and prepare it for ranking."""
 
-import difflib
-import re
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from reviewer.diffs import numbered_diff
+from reviewer.folds import find_folds
 from reviewer.graph import GraphDiff, build_graph, diff_graphs, graph_signals, to_mermaid
 from reviewer.interfaces import InterfaceChange, annotate, diff_interfaces
 from reviewer.noise import classify
@@ -14,7 +14,6 @@ from reviewer.units import Unit, diff_files, module_name
 
 # Longest diff sent to the model per unit; the report always shows all of it.
 MAX_DIFF_LINES = 400
-HUNK_RE = re.compile(r"@@ -(\d+)(,\d+)? \+(\d+)(,\d+)? @@")
 
 
 @dataclass
@@ -88,6 +87,10 @@ def ranking_input(pr: dict, analysis: Analysis, ranked: set[str]) -> dict:
                 "status": unit.status,
                 "signals": unit.signals,
                 "diff": unit_diff(unit),
+                "folds": [
+                    {k: f[k] for k in ("start", "end", "title", "summary", "columns")} | {"rows": len(f["rows"])}
+                    for f in (fold.to_dict() for fold in find_folds(unit.new_body, list(unit.new_lines), unit.path))
+                ],
             }
         )
     data = {"pr": pr, **report_data(analysis), "units": units}
@@ -99,29 +102,4 @@ def ranking_input(pr: dict, analysis: Analysis, ranked: set[str]) -> dict:
 
 
 def unit_diff(unit: Unit, max_lines: int = MAX_DIFF_LINES) -> str:
-    lines = list(
-        difflib.unified_diff(
-            unit.old_body.splitlines(),
-            unit.new_body.splitlines(),
-            fromfile=f"a/{unit.old_path or unit.path}",
-            tofile=f"b/{unit.path}",
-            lineterm="",
-        )
-    )
-    lines = [_file_line_numbers(line, unit) if line.startswith("@@") else line for line in lines]
-    if len(lines) > max_lines:
-        lines = lines[:max_lines] + [f"... {len(lines) - max_lines} more lines"]
-    return "\n".join(lines)
-
-
-def _file_line_numbers(header, unit):
-    """Rewrite a hunk header from body line numbers to file line numbers."""
-    m = HUNK_RE.match(header)
-    if not m:
-        return header
-    old_start, old_rest, new_start, new_rest = int(m[1]), m[2] or "", int(m[3]), m[4] or ""
-    if 0 < old_start <= len(unit.old_lines):
-        old_start = unit.old_lines[old_start - 1]
-    if 0 < new_start <= len(unit.new_lines):
-        new_start = unit.new_lines[new_start - 1]
-    return f"@@ -{old_start}{old_rest} +{new_start}{new_rest} @@"
+    return numbered_diff(unit.old_body, unit.new_body, list(unit.old_lines), list(unit.new_lines), max_lines)

@@ -187,3 +187,27 @@ def test_old_databases_get_the_description_column(tmp_path):
     assert store.rankings(["f"])["f"]["description"] is None
     store.save_rankings([{"fingerprint": "g", "tier": "detail", "reason": "r", "summary": "s", "description": "d"}], None)
     assert store.rankings(["g"])["g"]["description"] == "d"
+
+
+def test_folds_apply_only_to_wholly_added_or_unchanged_lines():
+    from reviewer.folds import Fold
+    from reviewer.report import shown_folds
+
+    diff = [["+", None, 1, "a"], ["+", None, 2, "b"], [" ", 3, 3, "c"], ["-", 4, None, "d"], [" ", 5, 4, "e"]]
+    folds = [Fold(1, 2, None, "s", []), Fold(2, 3, None, "s", []), Fold(3, 4, None, "s", []), Fold(9, 9, None, "s", [])]
+    assert [(f["start"], f["changed_lines"]) for f in shown_folds(folds, diff)] == [(1, 2)]
+
+
+def test_units_carry_attention_and_highlights():
+    store = Store()
+    pr_id = analyze(store, FIRST)
+    f = unit(store, pr_id, "pkg.mod.f")
+    store.save_rankings(
+        [{"fingerprint": f["fingerprint"], "tier": "behavior", "reason": "r", "summary": "s",
+          "attention": "skim", "highlights": [{"line": 2, "note": "n"}]}],
+        model=None,
+    )
+    views = {u["qualname"]: u for u in page_data(store, pr_id)["units"]}
+    assert (views["pkg.mod.f"]["attention"], views["pkg.mod.f"]["highlights"]) == ("skim", [{"line": 2, "note": "n"}])
+    assert (views["pkg.mod.g"]["attention"], views["pkg.mod.g"]["highlights"]) == ("read", [])
+    assert views["pkg.mod._h"]["attention"] == "hidden"

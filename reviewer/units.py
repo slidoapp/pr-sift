@@ -1,8 +1,11 @@
 """Split sources into symbol-level units and fingerprint their changes.
 
 A unit is a function, method, class body (without its methods and
-nested classes) or the module-level code of a Python file. Non-Python
-files and files that fail to parse are a single file-level unit.
+nested classes), the imports of a module, or one other top-level
+statement, such as a constant or the block that wires up tasks.
+Comments right above a top-level definition or statement belong to
+it. Non-Python files and files that fail to parse are a single
+file-level unit.
 """
 
 import ast
@@ -21,7 +24,7 @@ DEFS = (*FUNCS, ast.ClassDef)
 @dataclass(frozen=True)
 class Symbol:
     qualname: str  # e.g. "pkg.mod.Client.get"; the path for file units
-    kind: str  # function | method | class | module | file
+    kind: str  # function | method | class | imports | statement | file
     text: str
     lines: tuple[int, ...]  # source line number of each line of text
     tree: ast.AST | None  # None for file units
@@ -75,29 +78,44 @@ def extract_symbols(path: str, source: str) -> dict[str, Symbol]:
             pass
         else:
             symbols: dict[str, Symbol] = {}
-            _collect(tree, module_name(path), "module", lines, _comments_by_line(source), symbols)
+            _collect_module(tree, module_name(path), lines, _comments_by_line(source), symbols)
             return symbols
     return {path: Symbol(path, "file", "\n".join(lines), tuple(range(1, len(lines) + 1)), None)}
 
 
-def _collect(node, qualname, kind, lines, comments, out):
-    if isinstance(node, FUNCS):
-        span = list(_span(node, len(lines)))
-        tree = node
-    else:
-        children = [c for c in node.body if isinstance(c, DEFS)]
-        removed = {n for c in children for n in _span(c, len(lines))}
-        span = _trim_blank_runs([n for n in _span(node, len(lines)) if n not in removed], lines)
-        tree = copy.copy(node)
-        tree.body = [s for s in node.body if not isinstance(s, DEFS)]
-        if isinstance(node, ast.ClassDef) and not tree.body:
-            tree.body = [ast.Pass()]
-        for child in children:
-            child_kind = "class" if isinstance(child, ast.ClassDef) else "method" if kind == "class" else "function"
-            _collect(child, f"{qualname}.{child.name}", child_kind, lines, comments, out)
-        if kind == "module" and not span:
-            return
-    out[qualname] = Symbol(
+def _collect_module(module, name, lines, comments, out):
+    """Collect a module's definitions, its imports and each other
+    top-level statement, with the comments right above them."""
+    imports, previous_end = [], 0
+    names: dict[str, int] = {}
+    for stmt in module.body:
+        start = _start(stmt)
+        leading = _leading_comments(previous_end, start, lines)
+        previous_end = stmt.end_lineno
+        if isinstance(stmt, DEFS):
+            qualname = f"{name}.{stmt.name}"
+            _collect(stmt, qualname, "class" if isinstance(stmt, ast.ClassDef) else "function", lines, comments, out, leading)
+        elif isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            imports.append((stmt, leading))
+        else:
+            label = _statement_name(stmt)
+            names[label] = names.get(label, 0) + 1
+            if names[label] > 1:
+                label = f"{label} #{names[label]}"
+            span = leading + list(range(start, stmt.end_lineno + 1))
+            out[f"{name}.{label}"] = _symbol(f"{name}.{label}", "statement", span, _module_of([stmt]), lines, comments)
+    if imports:
+        span = [n for stmt, leading in imports for n in leading + list(range(stmt.lineno, stmt.end_lineno + 1))]
+        tree = _module_of([stmt for stmt, _ in imports])
+        out[f"{name}.<imports>"] = _symbol(f"{name}.<imports>", "imports", span, tree, lines, comments)
+
+
+def _module_of(stmts):
+    return ast.Module(body=stmts, type_ignores=[])
+
+
+def _symbol(qualname, kind, span, tree, lines, comments):
+    return Symbol(
         qualname,
         kind,
         "\n".join(lines[n - 1] for n in span),
@@ -107,11 +125,71 @@ def _collect(node, qualname, kind, lines, comments, out):
     )
 
 
-def _span(node, nlines):
-    if isinstance(node, ast.Module):
-        return range(1, nlines + 1)
-    start = min([d.lineno for d in node.decorator_list] + [node.lineno])
-    return range(start, node.end_lineno + 1)
+def _leading_comments(previous_end, start, lines):
+    """The comment lines between two top-level statements, if there is
+    nothing but comments and blank lines between them."""
+    between = list(range(previous_end + 1, start))
+    if not all(not lines[n - 1].strip() or lines[n - 1].strip().startswith("#") for n in between):
+        return []
+    return _trim_blank_runs(between, lines) if any(lines[n - 1].strip() for n in between) else []
+
+
+def _statement_name(stmt) -> str:
+    """A name for a top-level statement that stays the same while its
+    content changes: the assigned names, or what kind of block it is."""
+    def short(node):
+        text = " ".join(ast.unparse(node).split())
+        return text if len(text) <= 40 else text[:39] + "…"
+
+    def target(node):
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return ",".join(target(e) for e in node.elts)
+        return node.id if isinstance(node, ast.Name) else short(node)
+
+    match stmt:
+        case ast.Assign(targets=targets):
+            return ",".join(target(t) for t in targets)
+        case ast.AnnAssign(target=t) | ast.AugAssign(target=t):
+            return target(t)
+        case ast.Expr(value=ast.Constant(value=str())):
+            return "<docstring>"
+        case ast.Expr(value=ast.Call(func=func)):
+            return f"<{short(func)}()>"
+        case ast.If(test=test):
+            return f"<if {short(test)}>"
+        case ast.For(target=t, iter=it) | ast.AsyncFor(target=t, iter=it):
+            return f"<for {short(t)} in {short(it)}>"
+        case ast.While(test=test):
+            return f"<while {short(test)}>"
+        case ast.With(items=items) | ast.AsyncWith(items=items):
+            return f"<with {short(items[0].context_expr)}>"
+        case ast.Match(subject=subject):
+            return f"<match {short(subject)}>"
+    return f"<{type(stmt).__name__.lower()}>"
+
+
+def _collect(node, qualname, kind, lines, comments, out, leading=()):
+    if isinstance(node, FUNCS):
+        span = list(leading) + list(_span(node))
+        tree = node
+    else:
+        children = [c for c in node.body if isinstance(c, DEFS)]
+        removed = {n for c in children for n in _span(c)}
+        span = list(leading) + _trim_blank_runs([n for n in _span(node) if n not in removed], lines)
+        tree = copy.copy(node)
+        tree.body = [s for s in node.body if not isinstance(s, DEFS)] or [ast.Pass()]
+        for child in children:
+            child_kind = "class" if isinstance(child, ast.ClassDef) else "method"
+            _collect(child, f"{qualname}.{child.name}", child_kind, lines, comments, out)
+    out[qualname] = _symbol(qualname, kind, span, tree, lines, comments)
+
+
+def _start(node):
+    return min([d.lineno for d in getattr(node, "decorator_list", [])] + [node.lineno])
+
+
+def _span(node):
+    return range(_start(node), node.end_lineno + 1)
 
 
 def _trim_blank_runs(numbers, lines):

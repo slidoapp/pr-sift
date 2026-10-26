@@ -51,10 +51,10 @@ def test_analyze_revisions(pr_repo):
 
     units = {u.qualname: (u.status, u.noise, u.signals) for u in analysis.units}
     assert units == {
-        "app.client": ("modified", None, ["new-module-edge"]),
+        "app.client.<imports>": ("modified", None, ["new-module-edge"]),
         "app.client.fetch": ("modified", None, ["public-signature"]),
         "app.client._parse": ("modified", "local-rename", []),
-        "app.retry": ("added", None, ["new-dependency"]),
+        "app.retry.<imports>": ("added", None, ["new-dependency"]),
         "app.retry.with_retry": ("added", None, ["public-signature"]),
         "pyproject.toml": ("modified", None, ["dependency"]),
     }
@@ -102,10 +102,10 @@ def test_analyze_ingest_and_reanalyze(fake_github, tmp_path, capsys):
     assert first["counts"] == {"units": 6, "hidden": {"local-rename": 1}, "ranked": 0, "to_rank": 5}
     assert first["architecture"]["mermaid"].startswith("flowchart LR")
     assert {u["qualname"] for u in first["units"]} == {
-        "app.client", "app.client.fetch", "app.retry", "app.retry.with_retry", "pyproject.toml",
+        "app.client.<imports>", "app.client.fetch", "app.retry.<imports>", "app.retry.with_retry", "pyproject.toml",
     }
     fetch = next(u for u in first["units"] if u["qualname"] == "app.client.fetch")
-    assert "+def fetch(url, retries=3):" in fetch["diff"]
+    assert "    6 + def fetch(url, retries=3):" in fetch["diff"]
 
     # An incomplete ranking is rejected and nothing is stored.
     partial = rank_everything(first)
@@ -145,4 +145,9 @@ def test_unit_diff_uses_file_line_numbers():
     old = "X = 1\n\n\ndef f():\n    a = 1\n    return a\n"
     new = "X = 1\n\n\ndef f():\n    a = 2\n    return a\n"
     [unit] = diff_files({"m.py": old}, {"m.py": new})
-    assert "@@ -4,3 +4,3 @@" in unit_diff(unit)
+    assert unit_diff(unit) == "\n".join([
+        "    4   def f():",
+        "    5 -     a = 1",
+        "    5 +     a = 2",
+        "    6       return a",
+    ])

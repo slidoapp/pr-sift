@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS rankings (
     reason TEXT NOT NULL,
     summary TEXT NOT NULL,
     description TEXT,                -- what the symbol does, when its docstring doesn't say
+    attention TEXT,                  -- read | skim; NULL means read
+    highlights TEXT,                 -- JSON list of {line, note}
     model TEXT,
     created_at TEXT NOT NULL
 );
@@ -106,9 +108,10 @@ class Store:
     def _migrate(self) -> None:
         """Add columns that databases created by earlier versions lack."""
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(rankings)")}
-        if "description" not in columns:
-            with self.conn:
-                self.conn.execute("ALTER TABLE rankings ADD COLUMN description TEXT")
+        with self.conn:
+            for column in ("description", "attention", "highlights"):
+                if column not in columns:
+                    self.conn.execute(f"ALTER TABLE rankings ADD COLUMN {column} TEXT")
 
     def close(self) -> None:
         self.conn.close()
@@ -179,11 +182,15 @@ class Store:
         with self.conn:
             self.conn.executemany(
                 """
-                INSERT OR REPLACE INTO rankings (fingerprint, tier, reason, summary, description, model, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO rankings
+                    (fingerprint, tier, reason, summary, description, attention, highlights, model, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    (r["fingerprint"], r["tier"], r["reason"], r["summary"], r.get("description"), model, now())
+                    (
+                        r["fingerprint"], r["tier"], r["reason"], r["summary"], r.get("description"),
+                        r.get("attention") or "read", json.dumps(r.get("highlights") or []), model, now(),
+                    )
                     for r in rankings
                 ],
             )

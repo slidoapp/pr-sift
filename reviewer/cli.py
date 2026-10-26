@@ -22,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     analyze.add_argument("pr", nargs="?", help="number, [host/]owner/repo#n or URL; default: the current branch's PR")
     analyze.add_argument("--repo", help="[host/]owner/name, when pr is a number")
     analyze.add_argument("--out", type=Path, help="write the JSON here instead of stdout")
+    analyze.add_argument("--rerank", action="store_true", help="ask for every unit to be ranked again")
 
     ingest = commands.add_parser("ingest", help="store the model's ranking of an analysis")
     ingest.add_argument("pr")
@@ -78,7 +79,7 @@ def cmd_analyze(args) -> int:
     }
     store = Store()
     store.save_analysis(repo_key(pr), pr.number, info, analysis.units, report_data(analysis))
-    ranked = set(store.rankings(u.fingerprint for u in analysis.units))
+    ranked = set() if args.rerank else set(store.rankings(u.fingerprint for u in analysis.units))
     data = ranking_input(info, analysis, ranked)
 
     text = json.dumps(data, indent=2)
@@ -106,13 +107,16 @@ def cmd_ingest(args) -> int:
     units = [u for u in store.units(row["id"]) if u["noise"] is None]
     known = {u["fingerprint"] for u in units}
     expected = known - set(store.rankings(known))
+    lines = {}
+    for u in units:
+        lines.setdefault(u["fingerprint"], set()).update(json.loads(u["old_lines"]) + json.loads(u["new_lines"]))
 
     try:
         data = json.loads(args.ranking.read_text())
     except (OSError, json.JSONDecodeError) as e:
         print(f"error: cannot read {args.ranking}: {e}", file=sys.stderr)
         return 1
-    if errors := validate(data, expected, known):
+    if errors := validate(data, expected, known, lines):
         print("error: invalid ranking:", *(f"  - {e}" for e in errors), sep="\n", file=sys.stderr)
         return 1
 
@@ -120,7 +124,12 @@ def cmd_ingest(args) -> int:
     store.save_summary(row["id"], row["head_sha"], data["overview"], data.get("architecture_summary"), data["components"])
     rankings = store.rankings(known)
     tiers = Counter(rankings[u["fingerprint"]]["tier"] for u in units if u["fingerprint"] in rankings)
-    print(f"{pr}: stored {len(data['units'])} rankings; " + ", ".join(f"{n} {t}" for t, n in sorted(tiers.items())))
+    skim = sum(1 for u in units if u["fingerprint"] in rankings and rankings[u["fingerprint"]]["attention"] == "skim")
+    print(
+        f"{pr}: stored {len(data['units'])} rankings; "
+        + ", ".join(f"{n} {t}" for t, n in sorted(tiers.items()))
+        + f"; {skim} to skim"
+    )
     return 0
 
 

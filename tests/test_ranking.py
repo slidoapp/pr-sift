@@ -53,3 +53,23 @@ def test_description_is_optional_but_must_be_a_string():
     assert validate(ranking(units=[unit | {"description": 3}]), {"a"}, {"a"}) == [
         "units[0]: description must be a string or null"
     ]
+
+
+def test_attention_and_highlights():
+    unit = {"fingerprint": "a", "tier": "behavior", "reason": "r", "summary": "s"}
+    lines = {"a": {10, 11, 12}}
+    good = unit | {"attention": "skim", "highlights": [{"line": 11, "note": "max int as id"}]}
+    assert validate(ranking(units=[good]), {"a"}, {"a"}, lines) == []
+    assert validate(ranking(units=[unit]), {"a"}, {"a"}, lines) == []
+
+    bad = unit | {
+        "attention": "ignore",
+        "highlights": [{"line": 99, "note": "x"}, {"line": "11", "note": "x"}, {"line": 11, "note": ""}],
+    }
+    assert validate(ranking(units=[bad]), {"a"}, {"a"}, lines) == [
+        "units[0]: attention must be one of read, skim",
+        "units[0].highlights[0]: line 99 is not in the unit's diff",
+        "units[0].highlights[1]: line must be a file line number",
+        "units[0].highlights[2] must have a non-empty note",
+    ]
+    assert validate(ranking(units=[unit | {"highlights": {}}]), {"a"}, {"a"}, lines) == ["units[0]: highlights must be a list"]

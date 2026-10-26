@@ -1,13 +1,15 @@
 """Validate the ranking the model writes for an analysis."""
 
 TIERS = ("architecture", "interface", "behavior", "detail")
+ATTENTION = ("read", "skim")
 
 
-def validate(data: object, expected: set[str], known: set[str]) -> list[str]:
+def validate(data: object, expected: set[str], known: set[str], lines: dict[str, set[int]] | None = None) -> list[str]:
     """Return what's wrong with a ranking, or an empty list.
 
     expected are the fingerprints that must be ranked, known those that
-    may be ranked.
+    may be ranked. lines maps fingerprints to the file lines a highlight
+    may point at.
     """
     if not isinstance(data, dict):
         return ["the ranking must be a JSON object"]
@@ -49,7 +51,27 @@ def validate(data: object, expected: set[str], known: set[str]) -> list[str]:
                 errors.append(f"units[{i}]: {key} must be a non-empty string")
         if not isinstance(unit.get("description"), (str, type(None))):
             errors.append(f"units[{i}]: description must be a string or null")
+        if unit.get("attention", "read") not in ATTENTION:
+            errors.append(f"units[{i}]: attention must be one of {', '.join(ATTENTION)}")
+        errors += _highlight_errors(i, unit.get("highlights", []), (lines or {}).get(fingerprint))
         ranked.add(fingerprint)
     if missing := expected - ranked:
         errors.append(f"{len(missing)} units are not ranked: {', '.join(sorted(missing))}")
+    return errors
+
+
+def _highlight_errors(i, highlights, allowed):
+    if not isinstance(highlights, list):
+        return [f"units[{i}]: highlights must be a list"]
+    errors = []
+    for j, highlight in enumerate(highlights):
+        where = f"units[{i}].highlights[{j}]"
+        if not isinstance(highlight, dict) or not isinstance(highlight.get("note"), str) or not highlight["note"].strip():
+            errors.append(f"{where} must have a non-empty note")
+            continue
+        line = highlight.get("line")
+        if not isinstance(line, int) or isinstance(line, bool):
+            errors.append(f"{where}: line must be a file line number")
+        elif allowed is not None and line not in allowed:
+            errors.append(f"{where}: line {line} is not in the unit's diff")
     return errors

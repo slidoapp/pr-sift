@@ -16,7 +16,7 @@ def test_build_graph_resolves_relative_and_absolute_imports():
         ("app.http.client", "app.core.settings"),
         ("app.core", "app.core.settings"),
     }
-    assert dict(graph.external) == {"requests": {"app.http.client"}, "yaml": {"app.core.settings"}}
+    assert dict(graph.external) == {"requests": {"app.http.client.<imports>"}, "yaml": {"app.core.settings.<imports>"}}
 
 
 def test_imports_are_attributed_to_the_symbol_holding_them():
@@ -56,8 +56,8 @@ def test_diff_graphs():
 def test_graph_signals():
     signals = graph_signals(build_graph(BASE), build_graph(head()))
     assert signals == {
-        "app.http.client": {"new-module-edge", "removed-module-edge"},
-        "app.retry": {"new-dependency"},
+        "app.http.client.<imports>": {"new-module-edge", "removed-module-edge"},
+        "app.retry.<imports>": {"new-dependency"},
     }
 
 

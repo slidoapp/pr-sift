@@ -39,7 +39,7 @@ def reason(unit: Unit, generated: Iterable[str] = DEFAULT_GENERATED) -> str | No
         return "comment" if old.comments != new.comments else "formatting"
     if ast.dump(strip_docstrings(old.tree)) == ast.dump(strip_docstrings(new.tree)):
         return "docstring"
-    if unit.kind == "module" and _imports_and_rest(old.tree) == _imports_and_rest(new.tree):
+    if unit.kind == "imports" and _imports_and_rest(old.tree) == _imports_and_rest(new.tree):
         return "imports"
     if isinstance(new.tree, FUNCS) and normalize(old) == normalize(new):
         # Callers may pass parameters of a public function by keyword.

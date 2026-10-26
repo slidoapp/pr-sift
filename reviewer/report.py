@@ -3,8 +3,9 @@
 import ast
 import json
 import textwrap
-from difflib import SequenceMatcher
 
+from reviewer.diffs import diff_rows
+from reviewer.folds import Fold, find_folds
 from reviewer.store import Store
 from reviewer.units import DEFS, module_name
 
@@ -66,7 +67,7 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
         state = "new"
     return {
         "qualname": qualname,
-        "module": module_name(unit["path"]) if unit["kind"] not in ("module", "file") else None,
+        "module": module_name(unit["path"]) if unit["kind"] != "file" else None,
         "old_qualname": unit["old_qualname"],
         "path": unit["path"],
         "old_path": unit["old_path"],
@@ -79,6 +80,9 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
         "reason": ranking["reason"] if ranking else None,
         "summary": ranking["summary"] if ranking else None,
         "description": ranking["description"] if ranking else None,
+        "attention": "hidden" if unit["noise"] else (ranking["attention"] if ranking and ranking["attention"] else "read"),
+        "highlights": json.loads(ranking["highlights"]) if ranking and ranking["highlights"] else [],
+        "folds": shown_folds(find_folds(unit["new_body"], new_lines, unit["path"]), diff),
         "docstring": doc_line(unit["new_body"] or unit["old_body"]) if unit["kind"] != "file" else None,
         "state": state,
         "flagged": qualname in flagged,
@@ -91,6 +95,21 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
     }
 
 
+def shown_folds(folds: list[Fold], diff: list[list]) -> list[dict]:
+    """The folds that can replace lines of this diff: those whose lines
+    are all added or all unchanged, with no removed lines between them.
+    Each gets the number of changed lines it hides."""
+    shown = []
+    for fold in folds:
+        rows = [i for i, row in enumerate(diff) if row[2] is not None and fold.start <= row[2] <= fold.end]
+        if not rows:
+            continue
+        span = diff[rows[0] : rows[-1] + 1]
+        if {row[0] for row in span} in ({"+"}, {" "}):
+            shown.append(fold.to_dict() | {"changed_lines": sum(row[0] == "+" for row in span)})
+    return shown
+
+
 def doc_line(body: str) -> str | None:
     """The first line of the docstring of a unit's body, if it has one."""
     try:
@@ -100,24 +119,3 @@ def doc_line(body: str) -> str | None:
     node = tree.body[0] if len(tree.body) == 1 and isinstance(tree.body[0], DEFS) else tree
     doc = ast.get_docstring(node)
     return doc.strip().splitlines()[0] if doc and doc.strip() else None
-
-
-def diff_rows(old: str, new: str, old_lines: list[int], new_lines: list[int]) -> list[list]:
-    """A full diff of two bodies as [kind, old line, new line, text] rows.
-
-    kind is " " (unchanged), "-" or "+". Line numbers are file line
-    numbers where known, else None.
-    """
-    a, b = old.splitlines(), new.splitlines()
-
-    def number(lines, i):
-        return lines[i] if i < len(lines) else None
-
-    rows = []
-    for tag, i1, i2, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
-        if tag == "equal":
-            rows += [[" ", number(old_lines, i1 + k), number(new_lines, j1 + k), a[i1 + k]] for k in range(i2 - i1)]
-            continue
-        rows += [["-", number(old_lines, i), None, a[i]] for i in range(i1, i2)]
-        rows += [["+", None, number(new_lines, j), b[j]] for j in range(j1, j2)]
-    return rows

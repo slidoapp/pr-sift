@@ -28,19 +28,55 @@ class C(Base):
 def test_extract_symbols():
     symbols = extract_symbols("src/pkg/mod.py", SOURCE)
 
-    assert sorted(symbols) == ["pkg.mod", "pkg.mod.C", "pkg.mod.C.Inner", "pkg.mod.C.m", "pkg.mod.f"]
     assert {q: s.kind for q, s in symbols.items()} == {
-        "pkg.mod": "module",
+        "pkg.mod.<imports>": "imports",
+        "pkg.mod.X": "statement",
         "pkg.mod.f": "function",
         "pkg.mod.C": "class",
         "pkg.mod.C.m": "method",
         "pkg.mod.C.Inner": "class",
     }
-    assert symbols["pkg.mod"].text == "import os\n\nX = 1"
+    assert symbols["pkg.mod.<imports>"].text == "import os"
+    assert symbols["pkg.mod.X"].text == "X = 1"
     assert symbols["pkg.mod.f"].text == "@decorator\ndef f(a):\n    return a"
     assert symbols["pkg.mod.f"].lines == (6, 7, 8)
     assert symbols["pkg.mod.C"].text == 'class C(Base):\n    """Doc."""\n    attr = 1'
     assert symbols["pkg.mod.C"].lines == (11, 12, 13)
+
+
+def test_top_level_statements_are_units_with_their_comments():
+    source = dedent(
+        """\
+        \"\"\"Module doc.\"\"\"
+        import os
+
+        # The limit
+        # in seconds
+        LIMIT = 30
+        a, b = 1, 2
+        setup()
+        setup()
+        if os.environ.get("DEBUG"):
+            LIMIT = 300
+
+        # Helpers
+        def f():
+            pass
+        """
+    )
+    symbols = extract_symbols("m.py", source)
+    assert sorted(symbols) == [
+        "m.<docstring>", "m.<if os.environ.get('DEBUG')>", "m.<imports>", "m.<setup()>", "m.<setup()> #2",
+        "m.LIMIT", "m.a,b", "m.f",
+    ]
+    assert symbols["m.LIMIT"].text == "# The limit\n# in seconds\nLIMIT = 30"
+    assert symbols["m.LIMIT"].lines == (4, 5, 6)
+    assert symbols["m.f"].text == "# Helpers\ndef f():\n    pass"
+
+
+def test_long_names_are_shortened():
+    symbols = extract_symbols("m.py", "for item in fetch_all_the_things_from_somewhere(with_a_long_argument):\n    pass\n")
+    assert list(symbols) == ["m.<for item in fetch_all_the_things_from_somewhere(wit…>"]
 
 
 def test_module_without_top_level_code_has_no_module_symbol():
@@ -104,7 +140,7 @@ def test_modified_unit_has_bodies_and_head_lines():
             return 2
         """,
     )
-    assert [(u.qualname, u.status) for u in units] == [("pkg.mod", "added"), ("pkg.mod.f", "modified")]
+    assert [(u.qualname, u.status) for u in units] == [("pkg.mod.X", "added"), ("pkg.mod.f", "modified")]
     unit = units[1]
     assert unit.old_body == "def f():\n    return 1"
     assert unit.new_body == "def f():\n    return 2"
@@ -114,7 +150,7 @@ def test_modified_unit_has_bodies_and_head_lines():
 def test_added_and_removed_files():
     units = diff_files({"old.py": "def gone():\n    pass\n"}, {"new.py": "X = 1\n\ndef born():\n    return 1\n"})
     assert sorted((u.qualname, u.status) for u in units) == [
-        ("new", "added"),
+        ("new.X", "added"),
         ("new.born", "added"),
         ("old.gone", "removed"),
     ]

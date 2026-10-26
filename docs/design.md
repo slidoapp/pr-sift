@@ -53,8 +53,18 @@ filtering.
 ### Units
 
 The unit of review is a **Python symbol**, not a diff hunk: a function,
-method, class body (excluding its methods), or module-level block,
-extracted with `ast`. Non-Python files are file-level units.
+method, class body (excluding its methods), the module's imports, or
+one other top-level statement, extracted with `ast`. Non-Python files
+are file-level units.
+
+Top-level statements are units of their own so that large modules
+split into readable chunks: a constant, a list of cases or the block
+that wires up tasks can each be read, skimmed or reviewed separately.
+They're named after what they assign (`pkg.mod.TIMEOUT`) or what kind
+of block they are (`pkg.mod.<with dag(...)>`, `pkg.mod.<if DEBUG>`), so
+the name survives edits to the content; repeated names get `#2`, `#3`.
+All top-level imports form one `pkg.mod.<imports>` unit. Comments right
+above a top-level definition or statement belong to it.
 
 Each changed unit has:
 
@@ -62,7 +72,7 @@ Each changed unit has:
 |---|---|
 | `path` | file path at head (or base, if deleted) |
 | `qualname` | e.g. `http.client.Client.get` |
-| `kind` | `function`, `method`, `class`, `module`, `file` |
+| `kind` | `function`, `method`, `class`, `imports`, `statement`, `file` |
 | `status` | `added`, `removed`, `modified`, `renamed`, `moved` |
 | `old_body`, `new_body` | source text at base and head |
 | `fingerprint` | see below |
@@ -150,6 +160,44 @@ Units carry flags from this analysis (`public-signature`,
 `new-module-edge`, …). The LLM sees them as hints, and the UI shows
 them as badges.
 
+## Pre-filtering: attention, folds and highlights
+
+Ranking by importance alone still leaves every line in front of the
+reviewer. Pre-filtering decides how much of each change to show.
+
+**Attention.** Every unit is `read`, `skim` or `hidden`:
+
+| Attention | Decided by | Shown as |
+|---|---|---|
+| `read` | default | full card with diff |
+| `skim` | Claude, with a reason: repetitive tests, fixtures, trivial helpers, code whose mistakes a first run or the tests would catch | one-line row, expandable |
+| `hidden` | the noise rules | count and compact rows |
+
+**Folds** (deterministic, `reviewer/folds.py`). Long collections whose
+lines are all added or all unchanged collapse into a table:
+
+- A list, tuple, set or dict with at least 3 elements spanning at least
+  8 lines becomes one row per element. Calls get a column per argument
+  (and a `call` column when the callees differ), dicts a column per key,
+  tuples a column per position, named after the comprehension target
+  when the list is iterated (`for path, limit, text in [...]`).
+  Comments inside the collection attach to the element after them.
+- JSON files become a table of their entries.
+- Cells are shortened to one line; the full lines stay one click away.
+
+Folds are computed from a unit's body whenever needed, so nothing is
+stored. They only shorten what is shown and never change attention.
+
+**Highlights** (Claude). Per unit, the few lines worth a look, each
+with a note, e.g. a max-int id written to a production index, a fixed
+sleep, a destructive call, a changed limit. They show as callouts on
+the card, are marked in the diff and in fold tables, and survive
+folding.
+
+**Progress** counts changed lines as reviewed, skim (skim units and
+folded lines), hidden and left. The percentage is of the lines left to
+read.
+
 ## LLM ranking
 
 Done by Claude inside the skill, not by the CLI.
@@ -175,11 +223,18 @@ unranked:
       "tier": "architecture | interface | behavior | detail",
       "reason": "why this tier, one line",
       "summary": "what changes in behavior, one line",
-      "description": "what the symbol does, one line, or null"
+      "description": "what the symbol does, one line, or null",
+      "attention": "read | skim",
+      "highlights": [{"line": 312, "note": "max int32 as a fake id in the production index"}]
     }
   ]
 }
 ```
+
+`attention` defaults to `read`. For `skim` units, `reason` says why
+skimming is safe. Highlight lines are file lines of the unit's diff;
+`ingest` rejects any other. `reviewer analyze --rerank` sends every
+unit to Claude again, for example after the ranking format changes.
 
 `description` is written only for units with interface signals whose
 docstring doesn't already say what they do. All text may use
@@ -290,9 +345,13 @@ command opens the browser. Light and dark themes follow the system.
   tokens highlighted. Each change has a one-line detail: a field's
   comment, the symbol's docstring, Claude's description, or else the
   summary of the change. Names link to their unit.
-- **Changes:** all units grouped by tier. Architecture, Interface and
-  Behavior are expanded; Detail and Hidden are collapsed. Each unit
-  shows its status, badges, summary, reason and diff.
+- **Changes:** three groups, each with its unit and line counts:
+  - **Read:** full cards, in tier sub-sections (Architecture,
+    Interface, Behavior, Detail); within a tier, units with highlights
+    come first, then bigger ones. Folds show as tables in the diff.
+  - **Skim:** a one-line list (name and summary, the reason on hover).
+    Highlights stay visible under their row.
+  - **Hidden:** the same list for noise, collapsed.
 
 **Interaction:**
 

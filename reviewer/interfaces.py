@@ -76,7 +76,7 @@ def extract_interfaces(path: str, source: str) -> list[Item]:
     if "migrations" in path.split("/") or "/alembic/versions/" in f"/{path}":
         items.append(Item("migration", path, "", path))
     symbols = extract_symbols(path, source)
-    exported = _dunder_all(symbols.get(module_name(path)))
+    exported = _dunder_all(symbols.get(f"{module_name(path)}.__all__"))
     for symbol in symbols.values():
         if symbol.tree is not None:
             items += _symbol_items(symbol, path, exported)
