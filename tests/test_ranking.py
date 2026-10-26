@@ -85,3 +85,50 @@ def test_sections():
         "units[0].sections[0]: line 99 is not in the unit's diff",
         "units[0].sections[1] must have a non-empty title",
     ]
+
+
+def test_walkthrough():
+    from reviewer.ranking import validate_walkthrough
+
+    units = {
+        "m.run": {"attention": "read", "lines": {10, 11, 12}},
+        "m.helper": {"attention": "skim", "lines": {20}},
+        "m.CONST": {"attention": "hide", "lines": {1}},
+    }
+    good = [
+        {"type": "text", "text": "Adds a **runner**."},
+        {"type": "architecture"},
+        {"type": "code", "unit": "m.run", "lines": [10, 11]},
+        {"type": "units", "title": "Helpers", "units": ["m.helper"]},
+    ]
+    assert validate_walkthrough(good, units) == []
+
+    bad = [
+        {"type": "text", "text": ""},
+        {"type": "code", "unit": "m.nope"},
+        {"type": "code", "unit": "m.run", "lines": [50, 60]},
+        {"type": "units", "title": "", "units": []},
+        {"type": "chart"},
+    ]
+    assert validate_walkthrough(bad, units) == [
+        "walkthrough[0]: text must be a non-empty string",
+        "walkthrough[1]: unknown unit 'm.nope'",
+        "walkthrough[2]: lines [50, 60] are outside m.run",
+        "walkthrough[3]: title must be a non-empty string",
+        "walkthrough[3]: units must be a non-empty list of unit names",
+        "walkthrough[4]: type must be one of text, code, units, architecture",
+        "skim unit m.helper is not shown or listed",
+    ]
+    assert validate_walkthrough([], units) == ["walkthrough must be a non-empty list of blocks"]
+
+
+def test_highlights_and_sections_must_not_point_at_bracket_lines():
+    unit = {"fingerprint": "a", "tier": "behavior", "reason": "r", "summary": "s"}
+    lines = {"a": {10: "    return {", 11: "        k: v,", 12: "    }"}}
+    bad = unit | {"highlights": [{"line": 12, "note": "n"}], "sections": [{"line": 12, "title": "t"}]}
+    assert validate(ranking(units=[bad]), {"a"}, {"a"}, lines) == [
+        "units[0].highlights[0]: line 12 holds only brackets; point at the line with the code it's about",
+        "units[0].sections[0]: line 12 holds only brackets; point at the line with the code it's about",
+    ]
+    good = unit | {"highlights": [{"line": 11, "note": "n"}]}
+    assert validate(ranking(units=[good]), {"a"}, {"a"}, lines) == []

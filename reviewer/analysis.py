@@ -1,5 +1,7 @@
 """Run the deterministic analysis of a change and prepare it for ranking."""
 
+import ast
+import json
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -69,9 +71,12 @@ def report_data(analysis: Analysis) -> dict:
     }
 
 
-def ranking_input(pr: dict, analysis: Analysis, ranked: set[str]) -> dict:
-    """The analysis as handed to the model: everything except units that
-    are noise or already ranked."""
+def ranking_input(pr: dict, analysis: Analysis, ranked: dict) -> dict:
+    """The analysis as handed to the model: the units to rank, which are
+    neither noise nor already ranked, and an outline of all visible units
+    with their cached rankings, for writing the walkthrough.
+
+    ranked maps fingerprints to stored ranking rows."""
     units, seen = [], set()
     for unit in analysis.units:
         if unit.noise or unit.fingerprint in ranked or unit.fingerprint in seen:
@@ -94,12 +99,70 @@ def ranking_input(pr: dict, analysis: Analysis, ranked: set[str]) -> dict:
                 ],
             }
         )
-    data = {"pr": pr, **report_data(analysis), "units": units}
+    data = {"pr": pr, **report_data(analysis), "units": units, "outline": outline(analysis.units, ranked)}
     data["counts"] |= {
         "ranked": sum(1 for u in analysis.units if not u.noise and u.fingerprint in ranked),
         "to_rank": len(units),
     }
     return data
+
+
+def outline(units: list[Unit], ranked: dict) -> list[dict]:
+    """Every visible unit, with how changed units use each other and the
+    cached ranking if there is one."""
+    visible = [u for u in units if not u.noise]
+    uses = _uses(visible)
+    used_by: dict[str, list[str]] = {}
+    for name, targets in uses.items():
+        for target in targets:
+            used_by.setdefault(target, []).append(name)
+    rows = []
+    for unit in visible:
+        ranking = ranked.get(unit.fingerprint)
+        rows.append(
+            {
+                "qualname": unit.qualname,
+                "kind": unit.kind,
+                "status": unit.status,
+                "changed_lines": _changed_lines(unit),
+                "uses": uses.get(unit.qualname, []),
+                "used_by": used_by.get(unit.qualname, []),
+                "ranking": (
+                    {k: ranking[k] for k in ("tier", "attention", "summary")}
+                    | {"highlights": len(json.loads(ranking["highlights"] or "[]"))}
+                    if ranking
+                    else None
+                ),
+            }
+        )
+    return rows
+
+
+def _changed_lines(unit):
+    return sum(1 for line in numbered_diff(unit.old_body, unit.new_body, [], [], 10**6).splitlines() if line[6:7] in "+-")
+
+
+def _uses(units: list[Unit]) -> dict[str, list[str]]:
+    """For each unit, the other changed units it names: calls, attribute
+    access or references, matched by their last name part."""
+    by_leaf: dict[str, list[str]] = {}
+    for unit in units:
+        if unit.kind in ("function", "method", "class", "statement"):
+            leaf = unit.qualname.rsplit(".", 1)[-1]
+            by_leaf.setdefault(leaf, []).append(unit.qualname)
+    uses = {}
+    for unit in units:
+        if unit.new is None or unit.new.tree is None:
+            continue
+        names = {
+            node.id if isinstance(node, ast.Name) else node.attr
+            for node in ast.walk(unit.new.tree)
+            if isinstance(node, (ast.Name, ast.Attribute))
+        }
+        targets = sorted({q for name in names for q in by_leaf.get(name, []) if q != unit.qualname})
+        if targets:
+            uses[unit.qualname] = targets
+    return uses
 
 
 def unit_diff(unit: Unit, max_lines: int = MAX_DIFF_LINES) -> str:

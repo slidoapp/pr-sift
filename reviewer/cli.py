@@ -10,7 +10,7 @@ from pathlib import Path
 
 from reviewer import github, repo
 from reviewer.analysis import analyze_revisions, ranking_input, report_data
-from reviewer.ranking import validate
+from reviewer.ranking import to_offsets, validate, validate_walkthrough
 from reviewer.server import ReportServer
 from reviewer.store import Store
 
@@ -83,7 +83,7 @@ def cmd_analyze(args) -> int:
     }
     store = Store()
     store.save_analysis(repo_key(pr), pr.number, info, analysis.units, report_data(analysis))
-    ranked = set() if args.rerank else set(store.rankings(u.fingerprint for u in analysis.units))
+    ranked = {} if args.rerank else store.rankings(u.fingerprint for u in analysis.units)
     data = ranking_input(info, analysis, ranked)
 
     text = json.dumps(data, indent=2)
@@ -108,24 +108,44 @@ def cmd_ingest(args) -> int:
     if row is None:
         print(f"error: {pr} has not been analyzed; run reviewer analyze first", file=sys.stderr)
         return 1
-    units = [u for u in store.units(row["id"]) if u["noise"] is None]
+    all_units = store.units(row["id"])
+    units = [u for u in all_units if u["noise"] is None]
     known = {u["fingerprint"] for u in units}
     expected = known - set(store.rankings(known))
-    lines = {}
+    lines: dict[str, dict[int, str]] = {}
     for u in units:
-        lines.setdefault(u["fingerprint"], set()).update(json.loads(u["old_lines"]) + json.loads(u["new_lines"]))
+        texts = lines.setdefault(u["fingerprint"], {})
+        for body, numbers in ((u["old_body"], u["old_lines"]), (u["new_body"], u["new_lines"])):
+            texts.update(zip(json.loads(numbers), body.splitlines()))
 
     try:
         data = json.loads(args.ranking.read_text())
     except (OSError, json.JSONDecodeError) as e:
         print(f"error: cannot read {args.ranking}: {e}", file=sys.stderr)
         return 1
-    if errors := validate(data, expected, known, lines):
+    errors = validate(data, expected, known, lines)
+    if not errors:
+        errors = validate_walkthrough(data.get("walkthrough"), walkthrough_units(all_units, data, store))
+    if errors:
         print("error: invalid ranking:", *(f"  - {e}" for e in errors), sep="\n", file=sys.stderr)
         return 1
 
+    rows = {u["fingerprint"]: u for u in units}
+    for ranking in data["units"]:
+        unit = rows[ranking["fingerprint"]]
+        old_lines, new_lines = json.loads(unit["old_lines"]), json.loads(unit["new_lines"])
+        for key in ("highlights", "sections"):
+            ranking[key] = to_offsets(ranking.get(key) or [], old_lines, new_lines)
     store.save_rankings(data["units"], args.model or data.get("model"))
-    store.save_summary(row["id"], row["head_sha"], data["overview"], data.get("architecture_summary"), data["components"])
+    fingerprints = {u["qualname"]: u["fingerprint"] for u in all_units}
+    walkthrough = [
+        block | ({"fingerprint": fingerprints[block["unit"]]} if block["type"] == "code" else {})
+        | ({"fingerprints": [fingerprints[n] for n in block["units"]]} if block["type"] == "units" else {})
+        for block in data["walkthrough"]
+    ]
+    store.save_summary(
+        row["id"], row["head_sha"], data["overview"], data.get("architecture_summary"), data["components"], walkthrough
+    )
     rankings = store.rankings(known)
     tiers = Counter(rankings[u["fingerprint"]]["tier"] for u in units if u["fingerprint"] in rankings)
     attention = Counter(rankings[u["fingerprint"]]["attention"] for u in units if u["fingerprint"] in rankings)
@@ -135,6 +155,27 @@ def cmd_ingest(args) -> int:
         + f"; {attention['skim']} to skim, {attention['hide']} hidden"
     )
     return 0
+
+
+def walkthrough_units(all_units, data, store) -> dict[str, dict]:
+    """Each unit's attention as the report will show it, after this
+    ranking, and its lines, for validating the walkthrough."""
+    given = {u["fingerprint"]: u for u in data["units"] if isinstance(u, dict)}
+    stored = store.rankings(u["fingerprint"] for u in all_units)
+    units = {}
+    for u in all_units:
+        ranking = given.get(u["fingerprint"])
+        if ranking is None and u["fingerprint"] in stored:
+            row = stored[u["fingerprint"]]
+            ranking = {"attention": row["attention"], "highlights": json.loads(row["highlights"] or "[]")}
+        if u["noise"]:
+            attention = "hidden"
+        elif ranking and ranking.get("highlights"):
+            attention = "read"
+        else:
+            attention = (ranking or {}).get("attention") or "read"
+        units[u["qualname"]] = {"attention": attention, "lines": set(json.loads(u["old_lines"]) + json.loads(u["new_lines"]))}
+    return units
 
 
 def cmd_serve(args) -> int:

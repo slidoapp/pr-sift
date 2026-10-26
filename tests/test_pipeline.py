@@ -91,6 +91,8 @@ def rank_everything(analysis_json):
             {"fingerprint": u["fingerprint"], "tier": "behavior", "reason": "r", "summary": "s"}
             for u in analysis_json["units"]
         ],
+        "walkthrough": [{"type": "text", "text": "Adds retries."}]
+        + [{"type": "code", "unit": u["qualname"]} for u in analysis_json["outline"]],
     }
 
 
@@ -114,6 +116,13 @@ def test_analyze_ingest_and_reanalyze(fake_github, tmp_path, capsys):
     assert cli.main(["ingest", "o/r#7", str(tmp_path / "partial.json")]) == 1
     assert "4 units are not ranked" in capsys.readouterr().err
 
+    # So is a walkthrough that leaves a read unit out.
+    short = rank_everything(first)
+    short["walkthrough"] = short["walkthrough"][:-1]
+    (tmp_path / "short.json").write_text(json.dumps(short))
+    assert cli.main(["ingest", "o/r#7", str(tmp_path / "short.json")]) == 1
+    assert "is not shown in a code block" in capsys.readouterr().err
+
     (tmp_path / "ranking.json").write_text(json.dumps(rank_everything(first)))
     assert cli.main(["ingest", "o/r#7", str(tmp_path / "ranking.json"), "--model", "test"]) == 0
     assert "stored 5 rankings; 5 behavior" in capsys.readouterr().out
@@ -129,7 +138,10 @@ def test_analyze_ingest_and_reanalyze(fake_github, tmp_path, capsys):
 
     store = Store()
     pr = store.pr("github.com/o/r", 7)
-    assert store.summary(pr["id"])["overview"] == "Adds retries to fetch."
+    summary = store.summary(pr["id"])
+    assert summary["overview"] == "Adds retries to fetch."
+    walkthrough = json.loads(summary["walkthrough"])
+    assert walkthrough[1]["fingerprint"] == next(u["fingerprint"] for u in store.units(pr["id"]) if u["qualname"] == walkthrough[1]["unit"])
 
 
 def test_ingest_before_analyze_fails(tmp_path, capsys):

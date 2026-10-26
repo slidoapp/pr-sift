@@ -61,11 +61,11 @@ const MAX_AUTO_OPEN = 25;
 const GAP_KEEP = 3; // unchanged lines kept around a collapsed run
 const GAP_MIN = 8; // shortest run of unchanged lines that gets collapsed
 const KEY_CONTEXT = 2; // lines shown around a highlight in the key-lines view of files without a skeleton
-const TABS = ["overview", "architecture", "interfaces", "changes"];
+const TABS = ["walkthrough", "architecture", "interfaces", "changes"];
 
 let data = null;
 const ui = {
-  tab: "overview",
+  tab: "walkthrough",
   filter: "all",
   closedTiers: new Set(["detail", "hidden"]),
   open: new Set(),
@@ -248,21 +248,18 @@ function renderBanner() {
   banner.hidden = false;
 }
 
-// Overview
+// Walkthrough: the story of the change, top-down, with code where needed
 
-function renderOverview() {
-  const panel = document.getElementById("panel-overview");
+function renderWalkthrough() {
+  const panel = document.getElementById("panel-walkthrough");
   const { summary } = data;
-  const cards = [];
+  const cards = [statsRow()];
+  const stale = summary?.stale && el("p", { class: "notice", text: "This was written for an earlier head. Run /review-pr again to refresh it." });
 
-  if (summary) {
-    cards.push(
-      el("div", { class: "card" },
-        el("h2", { text: "Summary" }),
-        el("p", { class: "lead" }, rich(summary.overview)),
-        summary.stale && el("p", { class: "notice", text: "This summary was written for an earlier head. Run /review-pr again to refresh it." }),
-      ),
-    );
+  if (summary?.walkthrough?.length) {
+    cards.push(el("article", { class: "card story" }, stale, summary.walkthrough.map(storyBlock)));
+  } else if (summary) {
+    cards.push(el("div", { class: "card" }, el("h2", { text: "Summary" }), el("p", { class: "lead" }, rich(summary.overview)), stale));
   } else {
     cards.push(
       el("div", { class: "card empty" },
@@ -271,6 +268,106 @@ function renderOverview() {
     );
   }
 
+  if (summary?.components?.length) {
+    cards.push(
+      el("div", { class: "card" },
+        el("h2", { text: "Behavior by component" }),
+        el("div", { class: "components" },
+          summary.components.map((c) =>
+            el("div", {}, el("h3", {}, rich(c.name)), el("ul", {}, c.behavior.map((b) => el("li", {}, rich(b))))),
+          ),
+        ),
+      ),
+    );
+  }
+  cards.push(progressCard(data.units.filter(isHidden)));
+  panel.replaceChildren(...cards);
+  for (const diagram of panel.querySelectorAll(".story .diagram")) drawDiagram(diagram, "story-graph");
+}
+
+function storyBlock(block, index) {
+  switch (block.type) {
+    case "text": return storyText(block.text);
+    case "code": return storyCode(block, index);
+    case "units": return storyUnits(block);
+    case "architecture": {
+      if (!Object.keys(data.architecture?.nodes || {}).length) return null;
+      return el("figure", { class: "story-figure" }, el("div", { class: "diagram" }));
+    }
+    default: return null;
+  }
+}
+
+// Text with blank-line paragraphs, "### " headings, "- " lists,
+// **bold** and `code`.
+function storyText(text) {
+  const nodes = [];
+  for (const paragraph of text.split(/\n\s*\n/)) {
+    const lines = paragraph.split("\n").filter((line) => line.trim());
+    if (!lines.length) continue;
+    if (lines.every((line) => /^\s*[-*] /.test(line))) {
+      nodes.push(el("ul", {}, lines.map((line) => el("li", {}, inline(line.replace(/^\s*[-*] /, ""))))));
+    } else if (lines.length === 1 && /^#{1,4} /.test(lines[0])) {
+      nodes.push(el("h3", { class: "story-heading" }, inline(lines[0].replace(/^#+ /, ""))));
+    } else {
+      nodes.push(el("p", {}, inline(lines.join(" "))));
+    }
+  }
+  return el("div", { class: "story-text" }, nodes);
+}
+
+function inline(text) {
+  return text.split(/\*\*([^*]+)\*\*/).map((part, i) => (i % 2 ? el("strong", {}, rich(part)) : rich(part))).flat();
+}
+
+function unitLink(qualname, label = qualname) {
+  return el("a", { href: "#changes", class: "unit-link", onclick: (e) => { e.preventDefault(); revealUnit(qualname); } }, label);
+}
+
+function shortName(u) {
+  return u.module && u.qualname.startsWith(`${u.module}.`) ? u.qualname.slice(u.module.length + 1) : u.qualname;
+}
+
+function storyCode(block, index) {
+  const u = data.units.find((x) => x.qualname === block.unit);
+  if (!u) return el("div", { class: "story-code missing", text: `${block.unit} is no longer part of this PR.` });
+  let rows = u.diff;
+  let keyLines = u.key_lines;
+  let sections = u.sections;
+  if (block.lines) {
+    const [first, last] = block.lines;
+    const inRange = rows.map((row, i) => [i, row[0] === "-" ? row[1] : row[2]]).filter(([, line]) => line != null && line >= first && line <= last);
+    if (inRange.length) rows = rows.slice(inRange[0][0], inRange[inRange.length - 1][0] + 1);
+    keyLines = null;
+    sections = sections.filter((section) => section.line >= first && section.line <= last);
+  }
+  const state = STATES[u.state];
+  return el("figure", { class: "story-code" },
+    el("figcaption", {},
+      el("span", { class: `state ${u.state}`, title: state.title, text: state.icon }),
+      unitLink(u.qualname, el("code", { class: "inline", text: shortName(u) })),
+      block.lines && el("span", { class: "muted", text: `lines ${block.lines[0]}–${block.lines[1]}` }),
+      block.stale && el("span", { class: "chip changed", text: "changed since this was written" }),
+    ),
+    renderDiff(rows, u.language, `story:${index}`, u.folds, u.highlights, keyLines, sections),
+  );
+}
+
+function storyUnits(block) {
+  return el("div", { class: "story-units" },
+    el("div", { class: "story-units-title" }, inline(block.title)),
+    el("ul", {}, block.units.map((name, i) => {
+      const u = data.units.find((x) => x.qualname === name);
+      return el("li", {},
+        u ? unitLink(name, el("code", { class: "inline", text: shortName(u) })) : el("code", { class: "inline", text: name }),
+        u?.summary && el("span", { class: "muted" }, " — ", rich(u.summary)),
+        block.stale?.[i] && el("span", { class: "chip changed", text: "changed" }),
+      );
+    })),
+  );
+}
+
+function statsRow() {
   const units = visibleUnits();
   const stats = TIERS.filter((t) => t.key !== "hidden").map((tier) => {
     const count = units.filter((u) => sectionOf(u) === tier.key).length;
@@ -287,23 +384,7 @@ function renderOverview() {
       el("div", { class: "label" }, el("span", { class: "dot", style: { background: "var(--tier-hidden)" } }), "Hidden"),
     ),
   );
-  cards.push(el("div", { class: "stats" }, stats));
-  cards.push(progressCard(hidden));
-
-  if (summary?.components?.length) {
-    cards.push(
-      el("div", { class: "card" },
-        el("h2", { text: "Behavior by component" }),
-        el("div", { class: "components" },
-          summary.components.map((c) =>
-            el("div", {}, el("h3", {}, rich(c.name)), el("ul", {}, c.behavior.map((b) => el("li", {}, rich(b))))),
-          ),
-        ),
-      ),
-    );
-  }
-
-  panel.replaceChildren(...cards);
+  return el("div", { class: "stats compact" }, stats);
 }
 
 function progressCard(hidden) {
@@ -387,16 +468,19 @@ async function renderArchitecture() {
     );
   }
   panel.replaceChildren(...cards);
+  if (nodes.length) await drawDiagram(diagram, "arch-graph");
+}
 
-  if (nodes.length && window.mermaid) {
-    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "neutral" });
-    try {
-      const { svg } = await window.mermaid.render("arch-graph", arch.mermaid);
-      diagram.innerHTML = svg;
-    } catch (error) {
-      diagram.replaceChildren(el("pre", { text: arch.mermaid }));
-    }
+async function drawDiagram(container, id) {
+  const text = data.architecture?.mermaid;
+  if (!text || !window.mermaid) return;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "neutral" });
+  try {
+    const { svg } = await window.mermaid.render(id, text);
+    container.innerHTML = svg;
+  } catch (error) {
+    container.replaceChildren(el("pre", { text }));
   }
 }
 
@@ -784,7 +868,7 @@ function renderDiff(rows, language, key, folds = [], highlights = [], keyLines =
     }
   };
   const gapRow = (text, gapKey) =>
-    el("tr", { class: "gap", onclick: () => { ui.gaps.add(gapKey); rerenderUnit(key); } }, el("td", { colspan: "3", text }));
+    el("tr", { class: "gap", onclick: () => { ui.gaps.add(gapKey); refresh(key); } }, el("td", { colspan: "3", text }));
 
   if (!keyLines) {
     renderRange(0, rows.length);
@@ -857,7 +941,7 @@ function foldView(fold, key, notes) {
     fold.title && el("code", { class: "inline", text: fold.title }),
     el("span", { class: "fold-summary", text: fold.summary }),
     el("span", { class: "muted", text: `· ${plural(lines, "line")} folded` }),
-    el("button", { class: "button small", text: "Show lines", onclick: () => { ui.unfolded.add(`${key}:${fold.start}`); rerenderUnit(key); } }),
+    el("button", { class: "button small", text: "Show lines", onclick: () => { ui.unfolded.add(`${key}:${fold.start}`); refresh(key); } }),
   );
   if (fold.columns.length === 1 && fold.columns[0] === "value" && !fold.rows.some((r) => r.comment || rowNote(r))) {
     return el("div", { class: "fold" }, head,
@@ -891,6 +975,12 @@ function foldView(fold, key, notes) {
 }
 
 // State changes
+
+// Re-render what a diff belongs to: a walkthrough block or a unit card.
+function refresh(key) {
+  if (key.startsWith("story:")) renderWalkthrough();
+  else rerenderUnit(key);
+}
 
 function rerenderUnit(qualname) {
   const node = document.getElementById(`unit-${qualname}`);
@@ -942,7 +1032,7 @@ async function updateReview(unit, change, advance = false) {
     if (change.reviewed) ui.open.delete(unit.qualname);
     renderProgress();
     renderBanner();
-    renderOverview();
+    renderWalkthrough();
     renderChanges();
     if (next) setFocus(next);
   } catch (error) {
@@ -953,7 +1043,7 @@ async function updateReview(unit, change, advance = false) {
 // Navigation
 
 function selectTab(name) {
-  if (!TABS.includes(name)) name = "overview";
+  if (!TABS.includes(name)) name = "walkthrough";
   ui.tab = name;
   for (const tab of TABS) {
     document.getElementById(`tab-${tab}`).setAttribute("aria-selected", String(tab === name));
@@ -1081,10 +1171,10 @@ async function main() {
   renderHeader();
   renderProgress();
   renderBanner();
-  renderOverview();
+  renderWalkthrough();
   renderInterfaces();
   renderChanges();
-  selectTab(location.hash.slice(1) || (data.summary ? "overview" : "changes"));
+  selectTab(location.hash.slice(1) || (data.summary ? "walkthrough" : "changes"));
   await renderArchitecture();
 }
 

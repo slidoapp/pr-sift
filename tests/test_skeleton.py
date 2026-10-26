@@ -82,8 +82,14 @@ def test_else_elif_finally_and_multiline_headers():
     ]
 
 
+def test_statements_show_without_bracket_lines():
+    source = "def f():\n    return {\n        k: {\n            'v': v,\n        }\n        for k, v in items\n    }\n"
+    text = dedent(source).splitlines()
+    assert [text[n - 1].strip() for n in kept(source)] == ["def f():", "return {", "k: {", "'v': v,", "for k, v in items"]
+
+
 def test_long_statements_show_their_first_line():
-    source = "def f():\n    call(\n        a=1,\n        b=2,\n        c=3,\n        d=4,\n        e=5,\n    )\n"
+    source = "def f():\n    call(\n" + "".join(f"        a{i}={i},\n" for i in range(16)) + "    )\n"
     assert kept(source) == [1, 2]
 
 
@@ -105,7 +111,7 @@ def test_assignments_feeding_a_return_are_kept():
 
 
 def test_long_statements_show_their_changed_lines():
-    source = "def f():\n    call(\n        a=1,\n        b=2,\n        c=3,\n        d=4,\n        e=5,\n    )\n"
+    source = "def f():\n    call(\n" + "".join(f"        a{i}={i},\n" for i in range(16)) + "    )\n"
     assert kept(source, changed={5}) == [1, 2, 5]
 
 

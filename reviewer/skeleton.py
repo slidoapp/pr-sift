@@ -10,6 +10,7 @@ to trivial helpers are left out.
 """
 
 import ast
+import re
 import textwrap
 
 LOG_ROOTS = {"logging", "logger", "log", "LOGGER", "LOG", "_logger", "_log", "warnings"}
@@ -28,8 +29,11 @@ EXITS = (ast.Return, ast.Raise, ast.Assert, ast.Break, ast.Continue, ast.Delete)
 MUTATING_METHODS = {
     "append", "extend", "add", "update", "insert", "remove", "discard", "pop", "setdefault", "clear",
 }
-# A kept statement longer than this shows only its first line.
-MAX_STATEMENT_LINES = 6
+# A kept statement that changed as a whole shows in full, minus
+# bracket-only lines, up to this many lines; a longer one shows its first
+# line. One that changed only in part shows its first and changed lines.
+MAX_STATEMENT_LINES = 15
+BRACKETS_ONLY = re.compile(r"^[\s()\[\]{},;:]*$")
 
 
 def skeleton_lines(body: str, lines: list[int], changed: set[int], top_level: bool = False) -> set[int]:
@@ -62,17 +66,17 @@ def skeleton_lines(body: str, lines: list[int], changed: set[int], top_level: bo
                 keep.add(line)
 
     def keep_statement(node):
-        if node.end_lineno - node.lineno < MAX_STATEMENT_LINES:
-            add(node.lineno, node.end_lineno)
-            return
-        # A long statement shows its first line, and, when only part of it
-        # changed (an edited argument of a long call), the changed lines.
-        add(node.lineno, node.lineno)
         span = range(node.lineno, node.end_lineno + 1)
         edited = [n for n in span if file_line(n) in changed]
+        add(node.lineno, node.lineno)
         if len(edited) < len(span):
+            # Only part changed, e.g. one argument of a long call: show that part.
             for n in edited:
                 add(n, n)
+        elif len(span) <= MAX_STATEMENT_LINES:
+            for n in span:
+                if not BRACKETS_ONLY.match(text[n - 1]):
+                    add(n, n)
 
     def header(start, end):
         # An unchanged header longer than two lines shows its first line.

@@ -44,14 +44,17 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
      headers use file line numbers) and `folds`: the line ranges the
      report collapses into tables, such as long lists of cases or a
      JSON fixture.
+   - `outline`: every visible unit, including ones ranked before, with
+     `uses` and `used_by` (which changed units it names, and which name
+     it) and its cached `ranking`, if any. Use it for the walkthrough.
 
    If `units` has more than about 60 entries, read it in parts, for
    example one package at a time with `jq '.units[] | select(.path |
    startswith("pkg/"))'`.
 
    If `units` is empty, every visible unit is already ranked: still
-   write the overview and components (step 3) with an empty `units`
-   list, so the summary matches the current head. If the user asks to
+   write the overview, components and walkthrough (step 3) with an
+   empty `units` list, so they match the current head. If the user asks to
    rank again, rerun step 1 with `--rerank`.
 
 3. **Rank.** Write `<scratch>/ranking.json`:
@@ -62,6 +65,13 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
      "architecture_summary": "2-3 sentences on how the structure changes, or null.",
      "components": [
        {"name": "http client", "behavior": ["fetch() retries 429 and 5xx up to 3 times"]}
+     ],
+     "walkthrough": [
+       {"type": "text", "text": "### Retries for flaky requests\n\nWhat and why, in prose."},
+       {"type": "architecture"},
+       {"type": "code", "unit": "app.client.fetch"},
+       {"type": "code", "unit": "app.retry.with_retry", "lines": [12, 30]},
+       {"type": "units", "title": "Tests", "units": ["tests.test_retry.test_gives_up"]}
      ],
      "units": [
        {
@@ -115,6 +125,50 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
 
    Don't list detail-tier, skim or hidden units individually unless the
    user asks.
+
+## Writing the walkthrough
+
+The walkthrough is the report's first tab: the story of the change, read
+top-down, with code only where the story needs it. Write it after
+ranking, for the whole PR (`outline`), not only the units you ranked
+this time.
+
+Blocks:
+
+- `text`: prose. Paragraphs are separated by blank lines; `### ` starts
+  a heading, `- ` a list item; `**bold**` and backticks work.
+- `code`: a unit's code, by `qualname` from `outline`. Without `lines`
+  the report shows the unit's key lines (its skeleton and highlights);
+  with `lines: [first, last]` (file lines) only that part, for a long
+  unit where one section matters.
+- `units`: a titled list of units that need no code here, each shown
+  with its summary.
+- `architecture`: the import-graph diagram. Include it when
+  `architecture.edges` or `external_added`/`external_removed` show a
+  structural change; leave it out otherwise.
+
+Structure, top-down, and only as deep as needed:
+
+1. **What and why**, 2–3 sentences, from the PR description and code.
+2. **The shape**, when components or their connections change: which
+   ones and how, with the `architecture` block.
+3. **What callers see**, when interfaces change.
+4. **The walkthrough**: follow the main path through the change, from
+   the entry points (units with empty `used_by`) to what they use. One
+   short step per paragraph, each followed by the `code` block it talks
+   about. Mention what each highlight is about in the prose next to it.
+5. **Also in this PR**: `units` blocks grouping what needs no code here
+   (tests, fixtures, docs, small helpers), by purpose.
+6. **Before merging**, when there is something: the open risks and to-dos
+   in one list (highlights, TODO pins and the like from the description).
+
+How deep to go follows attention: every `read` unit (and any unit with
+highlights) gets a `code` block; every `skim` unit is in a `units`
+block or, if the story needs it, a `code` block; `hide` and noise units
+are left out or listed at most. `reviewer ingest` rejects a walkthrough
+that leaves out a `read` or `skim` unit. Keep the prose short: a step is
+1–3 sentences. Say what the code does and why it matters; don't narrate
+the code line by line, and don't repeat the summaries.
 
 ## Choosing a tier
 
@@ -175,7 +229,8 @@ reviewer should look at even if they read nothing else, especially
 inside `folds`, which the report collapses: magic numbers and special
 ids, writes or deletes against real systems, sleeps, timeouts and
 retries, changed limits and defaults, environment-specific values,
-order dependencies. Use the file line from the diff's hunk headers.
+order dependencies. Use the file line from the diff, and point at the line that holds the
+code the note is about, never at a line of only brackets (`}`, `),`).
 Most units need none; don't highlight lines just to have some. Notes
 say what to check, in at most about 100 characters: "max int32 as a
 fake id written to the production index".

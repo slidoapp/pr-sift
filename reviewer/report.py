@@ -7,6 +7,7 @@ import textwrap
 from reviewer.diffs import diff_rows
 from reviewer.folds import Fold, find_folds
 from reviewer.skeleton import skeleton_lines
+from reviewer.ranking import to_lines
 from reviewer.store import Store
 from reviewer.units import DEFS, module_name
 
@@ -42,6 +43,7 @@ def page_data(store: Store, pr_id: int) -> dict:
                 "overview": summary["overview"],
                 "architecture_summary": summary["architecture_summary"],
                 "components": json.loads(summary["components"]),
+                "walkthrough": walkthrough(summary, units),
                 "stale": summary["head_sha"] != pr["head_sha"],
             }
             if summary
@@ -54,13 +56,26 @@ def page_data(store: Store, pr_id: int) -> dict:
     }
 
 
+def walkthrough(summary, units) -> list[dict]:
+    """The walkthrough's blocks, each code block marked stale when its
+    unit changed or disappeared since the walkthrough was written."""
+    blocks = json.loads(summary["walkthrough"] or "[]") if "walkthrough" in summary.keys() else []
+    current = {u["qualname"]: u["fingerprint"] for u in units}
+    for block in blocks:
+        if block.get("type") == "code":
+            block["stale"] = current.get(block["unit"]) != block.get("fingerprint")
+        elif block.get("type") == "units":
+            block["stale"] = [current.get(n) != f for n, f in zip(block["units"], block.get("fingerprints", []))]
+    return blocks
+
+
 def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
     """One unit with its ranking, review state and diff rows."""
     qualname = unit["qualname"]
     old_lines, new_lines = json.loads(unit["old_lines"]), json.loads(unit["new_lines"])
     diff = diff_rows(unit["old_body"], unit["new_body"], old_lines, new_lines)
-    highlights = json.loads(ranking["highlights"]) if ranking and ranking["highlights"] else []
-    sections = json.loads(ranking["sections"]) if ranking and ranking["sections"] else []
+    highlights = to_lines(json.loads(ranking["highlights"] or "[]"), old_lines, new_lines) if ranking else []
+    sections = to_lines(json.loads(ranking["sections"] or "[]"), old_lines, new_lines) if ranking else []
     review = reviewed.get(qualname) or reviewed.get(unit["old_qualname"])
     if unit["fingerprint"] in reviewed_fingerprints:
         state = "seen"

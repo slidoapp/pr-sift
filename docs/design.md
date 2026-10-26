@@ -215,6 +215,20 @@ blocks at natural boundaries. The report shows each title before its
 block's first line, which always shows, in both the key-lines and the
 full view.
 
+**Walkthrough** (Claude). The report's first tab tells the story of the
+change top-down: what and why, the shape (with the diagram when the
+architecture changes), what callers see, a walkthrough along the main
+path from the entry points, what else is in the PR, and what to do
+before merging. It's a list of blocks: `text`, `code` (a unit's key
+lines, or a line range of it), `units` (a titled list) and
+`architecture`. Code is referenced, not copied, so it renders like the
+Changes tab, with highlights and folds, and links to its card. Depth
+follows attention: every read unit gets a code block, every skim unit
+is at least listed, hidden units are left out; `ingest` checks this.
+The analysis gives Claude an outline of all units with which changed
+units use each other, to start from the entry points. The walkthrough
+belongs to one head; a block whose unit changed since shows as stale.
+
 **Progress** counts changed lines as reviewed, skim (skim units and
 folded lines), hidden and left. The percentage is of the lines left to
 read.
@@ -357,9 +371,9 @@ command opens the browser. Light and dark themes follow the system.
 
 **Tabs:**
 
-- **Overview:** PR summary, per-component behavior bullets, tier
-  counts, and changed lines: the share reviewed, hidden by the noise
-  rules (by reason), and left.
+- **Walkthrough** (first): unit counts, the walkthrough (or the
+  summary when there is none), per-component behavior bullets, and
+  changed lines: the share reviewed, to read, to skim and hidden.
 - **Architecture:** the Mermaid graph diff, the summary, new
   third-party dependencies.
 - **Interfaces:** a before/after table of signatures, model fields,

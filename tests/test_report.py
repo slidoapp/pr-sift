@@ -224,3 +224,81 @@ def test_key_lines_never_hide_every_change():
     unit_row = {"path": "m.py", "kind": "function", "old_body": "def f():\n    x = 1\n", "new_body": "def f():\n    x = 2\n"}
     diff = [[" ", 1, 1, "def f():"], ["-", 2, None, "    x = 1"], ["+", None, 2, "    x = 2"]]
     assert key_lines(unit_row, [1, 2], [1, 2], diff) == {"new": [1, 2], "old": [2]}
+
+
+def test_walkthrough_blocks_go_stale_when_their_unit_changes():
+    store = Store()
+    pr_id = analyze(store, FIRST)
+    f = unit(store, pr_id, "pkg.mod.f")
+    blocks = [
+        {"type": "text", "text": "Intro"},
+        {"type": "code", "unit": "pkg.mod.f", "fingerprint": f["fingerprint"]},
+        {"type": "units", "title": "More", "units": ["pkg.mod.g"], "fingerprints": [unit(store, pr_id, "pkg.mod.g")["fingerprint"]]},
+    ]
+    store.save_summary(pr_id, "abc", "o", None, [], blocks)
+    fresh = page_data(store, pr_id)["summary"]["walkthrough"]
+    assert (fresh[1]["stale"], fresh[2]["stale"]) == (False, [False])
+
+    pr_id = analyze(store, SECOND)  # f changes, g doesn't
+    later = page_data(store, pr_id)["summary"]["walkthrough"]
+    assert (later[1]["stale"], later[2]["stale"]) == (True, [False])
+
+
+def test_migrating_a_column_another_process_added_is_fine(tmp_path):
+    """Two processes open the store at once: both see the column missing,
+    and the second one's ALTER TABLE finds it already added."""
+    path = tmp_path / "db.sqlite"
+    store = Store(path)
+    store.conn.execute("ALTER TABLE pr_summary DROP COLUMN walkthrough")
+    stale = store.conn.execute("PRAGMA table_info(pr_summary)").fetchall()
+    store.conn.execute("ALTER TABLE pr_summary ADD COLUMN walkthrough TEXT")  # the other process
+
+    class SeesTheOldSchema:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def execute(self, sql, *args):
+            if sql == "PRAGMA table_info(pr_summary)":
+                return stale
+            return self.conn.execute(sql, *args)
+
+        def __enter__(self):
+            return self.conn.__enter__()
+
+        def __exit__(self, *exc):
+            return self.conn.__exit__(*exc)
+
+    store.conn = SeesTheOldSchema(store.conn)
+    store._migrate()
+
+
+def test_highlights_follow_their_unit_when_it_moves(tmp_path, monkeypatch):
+    import json as _json
+
+    from reviewer import cli
+
+    store = Store()
+    pr_id = analyze(store, FIRST)
+    f = unit(store, pr_id, "pkg.mod.f")
+    line = _json.loads(f["new_lines"])[1]  # "return 2"
+    ranking = {
+        "overview": "o", "architecture_summary": None, "components": [],
+        "units": [
+            {"fingerprint": f["fingerprint"], "tier": "behavior", "reason": "r", "summary": "s",
+             "highlights": [{"line": line, "note": "n"}]},
+            {"fingerprint": unit(store, pr_id, "pkg.mod.g")["fingerprint"], "tier": "detail", "reason": "r",
+             "summary": "s"},
+        ],
+        "walkthrough": [{"type": "code", "unit": "pkg.mod.f"}, {"type": "code", "unit": "pkg.mod.g"}],
+    }
+    path = tmp_path / "ranking.json"
+    path.write_text(_json.dumps(ranking))
+    assert cli.main(["ingest", "o/r#1", str(path)]) == 0
+    stored = _json.loads(store.rankings([f["fingerprint"]])[f["fingerprint"]]["highlights"])
+    assert stored == [{"note": "n", "side": "new", "offset": 1}]
+
+    # The same change, three lines further down: the highlight moves with it.
+    moved = {"pkg/mod.py": "X = 1\n\n\n" + FIRST["pkg/mod.py"]}
+    pr_id = store.save_analysis("github.com/o/r", 1, {"title": "T"}, classify(diff_files(BASE, moved)), {})
+    view = next(u for u in page_data(store, pr_id)["units"] if u["qualname"] == "pkg.mod.f")
+    assert view["highlights"] == [{"note": "n", "line": line + 3}]

@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS pr_summary (
     head_sha TEXT,
     overview TEXT NOT NULL,
     architecture_summary TEXT,
-    components TEXT NOT NULL         -- JSON list
+    components TEXT NOT NULL,        -- JSON list
+    walkthrough TEXT                 -- JSON list of blocks, see ranking.py
 );
 """
 
@@ -108,11 +109,19 @@ class Store:
 
     def _migrate(self) -> None:
         """Add columns that databases created by earlier versions lack."""
-        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(rankings)")}
+        added = {"rankings": ("description", "attention", "highlights", "sections"), "pr_summary": ("walkthrough",)}
         with self.conn:
-            for column in ("description", "attention", "highlights", "sections"):
-                if column not in columns:
-                    self.conn.execute(f"ALTER TABLE rankings ADD COLUMN {column} TEXT")
+            for table, wanted in added.items():
+                columns = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                for column in wanted:
+                    if column in columns:
+                        continue
+                    try:
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+                    except sqlite3.OperationalError as e:
+                        # Another process opening the store added it first.
+                        if "duplicate column" not in str(e):
+                            raise
 
     def close(self) -> None:
         self.conn.close()
@@ -197,14 +206,22 @@ class Store:
                 ],
             )
 
-    def save_summary(self, pr_id: int, head_sha: str, overview: str, architecture_summary: str | None, components: list) -> None:
+    def save_summary(
+        self,
+        pr_id: int,
+        head_sha: str,
+        overview: str,
+        architecture_summary: str | None,
+        components: list,
+        walkthrough: list | None = None,
+    ) -> None:
         with self.conn:
             self.conn.execute(
                 """
-                INSERT OR REPLACE INTO pr_summary (pr_id, head_sha, overview, architecture_summary, components)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO pr_summary (pr_id, head_sha, overview, architecture_summary, components, walkthrough)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (pr_id, head_sha, overview, architecture_summary, json.dumps(components)),
+                (pr_id, head_sha, overview, architecture_summary, json.dumps(components), json.dumps(walkthrough or [])),
             )
 
     def summary(self, pr_id: int) -> sqlite3.Row | None:
