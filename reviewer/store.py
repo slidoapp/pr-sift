@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS rankings (
     tier TEXT NOT NULL,
     reason TEXT NOT NULL,
     summary TEXT NOT NULL,
+    description TEXT,                -- what the symbol does, when its docstring doesn't say
     model TEXT,
     created_at TEXT NOT NULL
 );
@@ -100,6 +101,14 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns that databases created by earlier versions lack."""
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(rankings)")}
+        if "description" not in columns:
+            with self.conn:
+                self.conn.execute("ALTER TABLE rankings ADD COLUMN description TEXT")
 
     def close(self) -> None:
         self.conn.close()
@@ -170,10 +179,13 @@ class Store:
         with self.conn:
             self.conn.executemany(
                 """
-                INSERT OR REPLACE INTO rankings (fingerprint, tier, reason, summary, model, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO rankings (fingerprint, tier, reason, summary, description, model, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                [(r["fingerprint"], r["tier"], r["reason"], r["summary"], model, now()) for r in rankings],
+                [
+                    (r["fingerprint"], r["tier"], r["reason"], r["summary"], r.get("description"), model, now())
+                    for r in rankings
+                ],
             )
 
     def save_summary(self, pr_id: int, head_sha: str, overview: str, architecture_summary: str | None, components: list) -> None:

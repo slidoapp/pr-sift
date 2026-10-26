@@ -64,13 +64,19 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
          "fingerprint": "<copied exactly from the analysis>",
          "tier": "architecture | interface | behavior | detail",
          "reason": "why this tier, one line",
-         "summary": "what changes, one line"
+         "summary": "what changes, one line",
+         "description": "what the symbol does, one line, or null"
        }
      ]
    }
    ```
 
-   Every unit in the analysis must appear exactly once.
+   Every unit in the analysis must appear exactly once. Write a
+   `description` only for units with interface signals
+   (`public-signature`, `model-field`, `route`, `cli`, `env`) whose
+   docstring is missing or doesn't say what they do; otherwise use
+   `null`. The report shows the docstring's first line instead when
+   there is one.
 
 4. **Store it.**
 
@@ -128,9 +134,15 @@ Guidance:
 
 ## Writing summaries
 
+- Put code in backticks everywhere (overview, components, reasons,
+  summaries, descriptions): identifiers, paths, endpoints, values and
+  expressions, such as `fetch()`, `retries=3`, `/shorten` or
+  `dags/storage/`. The report renders them as inline code.
 - `summary` states the change in behavior, concretely, in at most about
-  120 characters: "Retries on 429 as well as 5xx; backoff cap 30s→60s",
-  not "Updated retry logic".
+  120 characters: "Retries on `429` as well as `5xx`; backoff cap
+  30s→60s", not "Updated retry logic".
+- `description` says what the symbol is for, not what changed: "POSTs
+  each smoke case and fails the task once at the end if any failed".
 - Don't restate the symbol name; the report shows it next to the
   summary.
 - `reason` says why the tier applies: "callers passing timeout

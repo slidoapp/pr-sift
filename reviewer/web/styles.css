@@ -172,8 +172,9 @@ h1 { margin: 4px 0 6px; font-size: 24px; line-height: 1.25; font-weight: 650; le
 .count:empty { display: none; }
 
 .progress { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; white-space: nowrap; }
-.track { width: 140px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.track { display: flex; width: 160px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .fill { height: 100%; width: 0; background: var(--state-seen); transition: width 0.25s ease; }
+.fill.hidden { background: var(--tier-hidden); opacity: 0.55; }
 
 main.wrap { padding-top: 20px; padding-bottom: 40px; min-height: 60vh; }
 
@@ -304,7 +305,9 @@ main.wrap { padding-top: 20px; padding-bottom: 40px; min-height: 60vh; }
 .iface:first-of-type { border-top: 0; }
 .iface .name { font: 600 13.5px var(--mono); overflow-wrap: anywhere; }
 .iface .name a { color: var(--text); }
-.iface .values { grid-column: 2; display: grid; gap: 3px; }
+.iface-doc, .iface .values { grid-column: 2; }
+.iface-doc { margin: 0; color: var(--muted); font-size: 13.5px; }
+.iface .values { display: grid; gap: 3px; }
 .iface .value { font: 12.5px/1.5 var(--mono); padding: 3px 8px; border-radius: 6px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .iface .value.before { background: var(--del-bg); color: var(--del-fg); }
 .iface .value.after { background: var(--add-bg); color: var(--add-fg); }
@@ -314,6 +317,24 @@ main.wrap { padding-top: 20px; padding-bottom: 40px; min-height: 60vh; }
 .iface .value::before { font-weight: 700; margin-right: 6px; }
 .iface .value.before::before { content: "−"; }
 .iface .value.after::before { content: "+"; }
+
+/* Inline code and the changed-lines meter */
+
+code.inline {
+  font: 0.88em var(--mono);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.meter { display: flex; height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; margin-bottom: 10px; }
+.meter-part.reviewed { background: var(--state-seen); }
+.meter-part.hidden { background: var(--tier-hidden); opacity: 0.55; }
+.meter-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; margin-bottom: 12px; }
+.meter-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.meter-legend b { font-variant-numeric: tabular-nums; }
 
 /* Changes */
 
@@ -364,6 +385,18 @@ main.wrap { padding-top: 20px; padding-bottom: 40px; min-height: 60vh; }
 .qualname .symbol { font-weight: 650; }
 .unit-summary { grid-column: 2 / 4; margin: 0; color: var(--text); font-size: 14px; }
 .unit-summary.none { color: var(--faint); font-style: italic; }
+.doc-source {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .unit-actions { display: flex; gap: 6px; }
 .icon-button {
   border: 1px solid var(--border);
@@ -453,5 +486,5 @@ table.diff tr.gap:hover td { color: var(--accent); }
   .unit-actions { grid-column: 2; }
   .unit-summary { grid-column: 2; }
   .iface { grid-template-columns: 1fr; }
-  .iface .values { grid-column: 1; }
+  .iface-doc, .iface .values { grid-column: 1; }
 }

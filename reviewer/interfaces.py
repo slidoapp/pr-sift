@@ -6,8 +6,10 @@ migrations.
 """
 
 import ast
+import io
 import posixpath
 import re
+import tokenize
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -47,6 +49,7 @@ class Item:
     path: str
     qualname: str | None = None
     scope: str = ""  # disambiguates equal names, e.g. the same route path in two modules
+    doc: str | None = None  # a field's comment
 
 
 @dataclass
@@ -58,6 +61,7 @@ class InterfaceChange:
     after: str | None
     path: str
     qualnames: tuple[str, ...]
+    doc: str | None = None
 
 
 def extract_interfaces(path: str, source: str) -> list[Item]:
@@ -99,9 +103,21 @@ def diff_interfaces(old_files: Mapping[str, str], new_files: Mapping[str, str]) 
                 after=after_value,
                 path=item.path,
                 qualnames=tuple(qualnames),
+                doc=next((i.doc for i in (after or []) + (before or []) if i.doc), None),
             )
         )
     return sorted(changes, key=lambda c: (CATEGORY_ORDER.index(c.category), c.name, c.path))
+
+
+def belongs(change: InterfaceChange, qualname: str, old_qualname: str | None, path: str, old_path: str | None) -> bool:
+    """Whether an interface change belongs to the unit with these names.
+
+    Changes without a symbol, like dependencies and migrations, belong
+    to every unit of their file.
+    """
+    if change.qualnames:
+        return qualname in change.qualnames or old_qualname in change.qualnames
+    return change.path in (path, old_path)
 
 
 def annotate(units: list[Unit], changes: list[InterfaceChange]) -> None:
@@ -109,11 +125,7 @@ def annotate(units: list[Unit], changes: list[InterfaceChange]) -> None:
     for change in changes:
         signal = SIGNALS[change.category]
         for unit in units:
-            if change.qualnames:
-                hit = unit.qualname in change.qualnames or unit.old_qualname in change.qualnames
-            else:
-                hit = change.path in (unit.path, unit.old_path)
-            if hit and signal not in unit.signals:
+            if belongs(change, unit.qualname, unit.old_qualname, unit.path, unit.old_path) and signal not in unit.signals:
                 unit.signals.append(signal)
 
 
@@ -155,8 +167,10 @@ def _symbol_items(symbol, path, exported):
     if isinstance(node, DEFS) and public:
         items.append(Item("signature", qualname, _signature(node), path, qualname))
     if isinstance(node, ast.ClassDef) and public and _is_model(node):
-        for field_name, text in _fields(node):
-            items.append(Item("model-field", f"{qualname}.{field_name}", text, path, qualname))
+        source = dict(zip(symbol.lines, symbol.text.splitlines()))
+        for field_name, text, stmt in _fields(node):
+            doc = _comment(stmt, source)
+            items.append(Item("model-field", f"{qualname}.{field_name}", text, path, qualname, doc=doc))
     if isinstance(node, FUNCS):
         for decorator in node.decorator_list:
             items += _decorator_items(decorator, node, symbol, path, module)
@@ -203,7 +217,7 @@ def _is_model(node):
 def _fields(node):
     for stmt in node.body:
         if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-            yield stmt.target.id, ast.unparse(stmt)
+            yield stmt.target.id, ast.unparse(stmt), stmt
         elif (
             isinstance(stmt, ast.Assign)
             and len(stmt.targets) == 1
@@ -212,7 +226,24 @@ def _fields(node):
         ):
             enum = any(_last_name(b) in {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"} for b in node.bases)
             if enum or (isinstance(stmt.value, ast.Call) and _last_name(stmt.value) in FIELD_CALLS):
-                yield stmt.targets[0].id, ast.unparse(stmt)
+                yield stmt.targets[0].id, ast.unparse(stmt), stmt
+
+
+def _comment(stmt, source):
+    """The comment on the lines right above a statement, or else at the
+    end of its line."""
+    above = []
+    line = stmt.lineno - 1
+    while line in source and source[line].strip().startswith("#"):
+        above.insert(0, source[line].strip().lstrip("#").strip())
+        line -= 1
+    if above:
+        return " ".join(above)
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(source.get(stmt.end_lineno, "")).readline)
+        return next((t.string.lstrip("#").strip() for t in tokens if t.type == tokenize.COMMENT), None)
+    except (tokenize.TokenError, SyntaxError):
+        return None
 
 
 def _string_args(call):

@@ -220,3 +220,19 @@ def test_annotate_adds_signals_to_units():
         "pkg.mod.fetch": ["public-signature", "env"],
         "pyproject.toml": ["dependency"],
     }
+
+
+def test_model_field_comments():
+    source = dedent(
+        """
+        @dataclass
+        class Case:
+            # What to call,
+            # relative to the base URL
+            path: str
+            timeout: float = 30  # seconds
+            name: str
+        """
+    )
+    docs = {c.name: c.doc for c in diff_interfaces({}, {"m.py": source}) if c.category == "model-field"}
+    assert docs == {"m.Case.path": "What to call, relative to the base URL", "m.Case.timeout": "seconds", "m.Case.name": None}

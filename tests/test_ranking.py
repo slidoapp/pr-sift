@@ -44,3 +44,12 @@ def test_field_errors():
 
 def test_not_an_object():
     assert validate([], set(), set()) == ["the ranking must be a JSON object"]
+
+
+def test_description_is_optional_but_must_be_a_string():
+    unit = {"fingerprint": "a", "tier": "interface", "reason": "r", "summary": "s"}
+    assert validate(ranking(units=[unit | {"description": "Does x."}]), {"a"}, {"a"}) == []
+    assert validate(ranking(units=[unit | {"description": None}]), {"a"}, {"a"}) == []
+    assert validate(ranking(units=[unit | {"description": 3}]), {"a"}, {"a"}) == [
+        "units[0]: description must be a string or null"
+    ]

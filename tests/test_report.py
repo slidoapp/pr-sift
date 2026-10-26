@@ -131,3 +131,59 @@ def test_review_of_stale_or_unknown_unit_is_rejected(server):
     assert request(server, "PUT", "/api/units/pkg.mod.f/review", {"fingerprint": "old", "reviewed": True})[0] == 409
     assert request(server, "PUT", "/api/units/pkg.mod.nope/review", {"fingerprint": "x", "reviewed": True})[0] == 404
     assert request(server, "PUT", "/api/units/pkg.mod.f/review", {"reviewed": True}, token=False)[0] == 403
+
+
+def test_doc_line():
+    from reviewer.report import doc_line
+
+    assert doc_line('    def get(self):\n        """Fetch it.\n\n        More."""\n        return 1') == "Fetch it."
+    assert doc_line('"""Module doc."""\nX = 1') == "Module doc."
+    assert doc_line("def f():\n    return 1") is None
+    assert doc_line("def f(:") is None
+
+
+def test_units_carry_changed_lines_and_docstrings():
+    store = Store()
+    old = {"pkg/mod.py": 'def fetch(url):\n    """Fetch a URL."""\n    return url\n'}
+    new = {"pkg/mod.py": 'def fetch(url, retries=3):\n    """Fetch a URL."""\n    return url\n'}
+    from reviewer.analysis import Analysis, report_data
+    from reviewer.graph import GraphDiff
+    from reviewer.interfaces import annotate, diff_interfaces
+
+    units = classify(diff_files(old, new))
+    interfaces = diff_interfaces(old, new)
+    annotate(units, interfaces)
+    graph = GraphDiff(1, {}, {}, [], [])
+    pr_id = store.save_analysis("github.com/o/r", 2, {"title": "T"}, units, report_data(Analysis(units, interfaces, graph)))
+    store.save_rankings(
+        [{"fingerprint": units[0].fingerprint, "tier": "interface", "reason": "r", "summary": "s", "description": "d"}],
+        model=None,
+    )
+
+    data = page_data(store, pr_id)
+    [view] = data["units"]
+    assert view["changed_lines"] == 2
+    assert view["docstring"] == "Fetch a URL."
+    assert view["description"] == "d"
+    assert [(c["category"], c["name"], c["after"], c["qualnames"]) for c in data["interfaces"]] == [
+        ("signature", "pkg.mod.fetch", "def fetch(url, retries=3)", ["pkg.mod.fetch"]),
+    ]
+
+
+def test_old_databases_get_the_description_column(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE rankings (fingerprint TEXT PRIMARY KEY, tier TEXT NOT NULL, reason TEXT NOT NULL,"
+        " summary TEXT NOT NULL, model TEXT, created_at TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO rankings VALUES ('f', 'detail', 'r', 's', NULL, 'now')")
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    assert store.rankings(["f"])["f"]["description"] is None
+    store.save_rankings([{"fingerprint": "g", "tier": "detail", "reason": "r", "summary": "s", "description": "d"}], None)
+    assert store.rankings(["g"])["g"]["description"] == "d"

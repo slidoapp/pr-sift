@@ -25,7 +25,7 @@ const NOISE_SHORT = {
   comment: "comments", formatting: "formatting", docstring: "docstrings", imports: "import order",
   "local-rename": "local renames", "symbol-rename": "private renames", move: "private moves", generated: "generated",
 };
-const CATEGORIES = {
+const CATEGORY_TITLES = {
   signature: "Signatures", "model-field": "Model fields", route: "Routes", cli: "CLI",
   env: "Environment variables", dependency: "Dependencies", migration: "Migrations",
 };
@@ -74,6 +74,14 @@ function el(tag, props = {}, ...children) {
     node.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
   return node;
+}
+
+// Text with `backticks` as nodes, the quoted parts as inline code.
+function rich(text) {
+  return String(text ?? "")
+    .split(/`([^`\n]+)`/)
+    .map((part, i) => (i % 2 ? el("code", { class: "inline", text: part }) : part))
+    .filter((part) => part !== "");
 }
 
 function loadPrefs() {
@@ -149,12 +157,31 @@ function renderHeader() {
   document.getElementById("count-changes").textContent = visibleUnits().length || "";
 }
 
+// Changed lines of the whole PR: reviewed, hidden by the noise rules, and left.
+function lineStats() {
+  const sum = (units) => units.reduce((n, u) => n + u.changed_lines, 0);
+  const total = sum(data.units);
+  const hidden = sum(data.units.filter((u) => u.noise));
+  const reviewed = sum(visibleUnits().filter((u) => u.state === "seen"));
+  return { total, hidden, reviewed, left: total - hidden - reviewed };
+}
+
+function percent(part, total) {
+  return total ? Math.round((100 * part) / total) : 0;
+}
+
 function renderProgress() {
+  const lines = lineStats();
   const units = visibleUnits();
   const seen = units.filter((u) => u.state === "seen").length;
-  const percent = units.length ? Math.round((100 * seen) / units.length) : 100;
-  document.getElementById("progress-fill").style.width = `${percent}%`;
-  document.getElementById("progress-label").textContent = `${seen} / ${units.length} reviewed`;
+  document.getElementById("progress-fill").style.width = `${(100 * lines.reviewed) / (lines.total || 1)}%`;
+  document.getElementById("progress-hidden").style.width = `${(100 * lines.hidden) / (lines.total || 1)}%`;
+  document.getElementById("progress-label").textContent =
+    `${percent(lines.reviewed, lines.total)}% reviewed · ${percent(lines.hidden, lines.total)}% hidden`;
+  document.getElementById("progress").title =
+    `Of ${lines.total.toLocaleString()} changed lines: ${lines.reviewed.toLocaleString()} reviewed, ` +
+    `${lines.hidden.toLocaleString()} hidden by noise rules, ${lines.left.toLocaleString()} left. ` +
+    `${seen} of ${units.length} units reviewed.`;
 }
 
 function renderBanner() {
@@ -194,7 +221,7 @@ function renderOverview() {
     cards.push(
       el("div", { class: "card" },
         el("h2", { text: "Summary" }),
-        el("p", { class: "lead", text: summary.overview }),
+        el("p", { class: "lead" }, rich(summary.overview)),
         summary.stale && el("p", { class: "notice", text: "This summary was written for an earlier head. Run /review-pr again to refresh it." }),
       ),
     );
@@ -223,6 +250,7 @@ function renderOverview() {
     ),
   );
   cards.push(el("div", { class: "stats" }, stats));
+  cards.push(progressCard(hidden));
 
   if (summary?.components?.length) {
     cards.push(
@@ -230,28 +258,47 @@ function renderOverview() {
         el("h2", { text: "Behavior by component" }),
         el("div", { class: "components" },
           summary.components.map((c) =>
-            el("div", {}, el("h3", { text: c.name }), el("ul", {}, c.behavior.map((b) => el("li", { text: b })))),
+            el("div", {}, el("h3", {}, rich(c.name)), el("ul", {}, c.behavior.map((b) => el("li", {}, rich(b))))),
           ),
         ),
       ),
     );
   }
 
-  if (hidden.length) {
-    const reasons = {};
-    for (const u of hidden) reasons[u.noise] = (reasons[u.noise] || 0) + 1;
-    cards.push(
-      el("div", { class: "card" },
-        el("h2", { text: "Hidden as noise" }),
-        el("div", { class: "hidden-breakdown" },
-          Object.entries(reasons)
-            .sort((a, b) => b[1] - a[1])
-            .map(([reason, n]) => el("span", { class: "chip", text: `${n} ${NOISE_SHORT[reason] || reason}` })),
-        ),
-      ),
-    );
-  }
   panel.replaceChildren(...cards);
+}
+
+function progressCard(hidden) {
+  const lines = lineStats();
+  const n = (value) => value.toLocaleString();
+  const reasons = {};
+  for (const u of hidden) {
+    reasons[u.noise] ??= { units: 0, lines: 0 };
+    reasons[u.noise].units++;
+    reasons[u.noise].lines += u.changed_lines;
+  }
+  const meter = (className, value) =>
+    el("div", { class: `meter-part ${className}`, style: { width: `${(100 * value) / (lines.total || 1)}%` } });
+  return el("div", { class: "card" },
+    el("h2", { text: "Changed lines" }),
+    el("div", { class: "meter" }, meter("reviewed", lines.reviewed), meter("hidden", lines.hidden)),
+    el("div", { class: "meter-legend" },
+      el("span", {}, el("i", { class: "dot", style: { background: "var(--state-seen)" } }),
+        el("b", { text: `${percent(lines.reviewed, lines.total)}%` }), ` reviewed (${n(lines.reviewed)} lines)`),
+      el("span", {}, el("i", { class: "dot", style: { background: "var(--tier-hidden)" } }),
+        el("b", { text: `${percent(lines.hidden, lines.total)}%` }), ` hidden by rules (${n(lines.hidden)} lines)`),
+      el("span", {}, el("i", { class: "dot", style: { background: "var(--border-strong)" } }),
+        el("b", { text: `${percent(lines.left, lines.total)}%` }), ` left (${n(lines.left)} lines)`),
+      el("span", { class: "muted", text: `of ${n(lines.total)} changed lines` }),
+    ),
+    hidden.length > 0 && el("div", { class: "hidden-breakdown" },
+      Object.entries(reasons)
+        .sort((a, b) => b[1].lines - a[1].lines)
+        .map(([reason, r]) =>
+          el("span", { class: "chip", text: `${NOISE_SHORT[reason] || reason}: ${plural(r.units, "unit")}, ${plural(r.lines, "line")}` }),
+        ),
+    ),
+  );
 }
 
 // Architecture
@@ -261,7 +308,7 @@ async function renderArchitecture() {
   const arch = data.architecture;
   const cards = [];
   if (data.summary?.architecture_summary) {
-    cards.push(el("div", { class: "card" }, el("h2", { text: "Summary" }), el("p", { class: "lead", text: data.summary.architecture_summary })));
+    cards.push(el("div", { class: "card" }, el("h2", { text: "Summary" }), el("p", { class: "lead" }, rich(data.summary.architecture_summary))));
   }
 
   const diagram = el("div", { class: "diagram" });
@@ -320,28 +367,48 @@ function renderInterfaces() {
     panel.replaceChildren(el("div", { class: "card empty", text: "No interface changes detected." }));
     return;
   }
-  const units = new Set(data.units.map((u) => u.qualname));
-  const groups = Object.keys(CATEGORIES)
+  const units = new Map(data.units.map((u) => [u.qualname, u]));
+  const groups = Object.keys(CATEGORY_TITLES)
     .map((category) => [category, data.interfaces.filter((c) => c.category === category)])
     .filter(([, items]) => items.length);
   panel.replaceChildren(
     ...groups.map(([category, items]) =>
       el("div", { class: "card iface-group" },
-        el("h2", { text: `${CATEGORIES[category]} (${items.length})` }),
+        el("h2", { text: `${CATEGORY_TITLES[category]} (${items.length})` }),
         items.map((change) => {
-          const target = change.qualnames.find((q) => units.has(q));
-          const name = target
-            ? el("a", { href: "#changes", text: change.name, onclick: (e) => { e.preventDefault(); revealUnit(target); } })
+          const unit = change.qualnames.map((q) => units.get(q)).find(Boolean)
+            || data.units.find((u) => !change.qualnames.length && u.path === change.path);
+          const name = unit
+            ? el("a", { href: "#changes", text: change.name, onclick: (e) => { e.preventDefault(); revealUnit(unit.qualname); } })
             : change.name;
           return el("div", { class: "iface" },
             el("span", {}, el("span", { class: `chip ${change.status}`, text: change.status })),
             el("div", { class: "name" }, name),
+            interfaceDetail(change, unit),
             el("div", { class: "values" }, interfaceValues(change.before, change.after)),
           );
         }),
       ),
     ),
   );
+}
+
+// One line on what the changed interface is: a field's comment, the
+// docstring, else what Claude says it does, else the summary of its
+// unit's change. A model field without a comment shows nothing, since
+// its class's line already shows on the class's signature.
+function interfaceDetail(change, unit) {
+  if (change.doc) return el("p", { class: "iface-doc" }, el("span", { class: "doc-source", text: "comment" }), rich(change.doc));
+  if (!unit || change.category === "model-field") return null;
+  const [source, text] = unit.docstring
+    ? ["docstring", unit.docstring]
+    : unit.description
+      ? ["what it does", unit.description]
+      : unit.summary
+        ? ["change", unit.summary]
+        : [null, null];
+  if (!text) return null;
+  return el("p", { class: "iface-doc" }, el("span", { class: "doc-source", text: source }), rich(text));
 }
 
 const MAX_WORD_DIFF_TOKENS = 600;
@@ -486,7 +553,7 @@ function unitCard(u) {
         ),
     u.noise
       ? el("p", { class: "unit-summary none", text: NOISE[u.noise] || u.noise })
-      : el("p", { class: `unit-summary ${u.summary ? "" : "none"}`, text: u.summary || "Not ranked yet." }),
+      : el("p", { class: `unit-summary ${u.summary ? "" : "none"}` }, u.summary ? rich(u.summary) : "Not ranked yet."),
   );
   card.append(head);
   if (open) card.append(unitBody(u));
@@ -495,7 +562,7 @@ function unitCard(u) {
 
 function unitBody(u) {
   const body = el("div", { class: "unit-body" });
-  if (u.reason) body.append(el("p", { class: "reason" }, el("b", { text: `Why ${tierOf(u)}: ` }), u.reason));
+  if (u.reason) body.append(el("p", { class: "reason" }, el("b", { text: `Why ${tierOf(u)}: ` }), rich(u.reason)));
   if (u.old_qualname || u.old_path) {
     body.append(el("p", { class: "moved", text: `${u.status === "renamed" ? "Renamed" : "Moved"} from ${u.old_qualname || u.qualname}${u.old_path ? ` (${u.old_path})` : ""}` }));
   }

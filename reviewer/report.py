@@ -1,10 +1,12 @@
 """Build the data the report page shows for one PR."""
 
+import ast
 import json
+import textwrap
 from difflib import SequenceMatcher
 
 from reviewer.store import Store
-from reviewer.units import module_name
+from reviewer.units import DEFS, module_name
 
 REVIEWED, FLAGGED = "reviewed", "flagged"
 
@@ -20,6 +22,7 @@ def page_data(store: Store, pr_id: int) -> dict:
     flagged = {r["qualname"] for r in reviews if r["status"] == FLAGGED}
     reviewed_fingerprints = {r["fingerprint"] for r in reviewed.values()}
 
+    interfaces = analysis.get("interfaces", [])
     views = [unit_view(u, rankings.get(u["fingerprint"]), reviewed, reviewed_fingerprints, flagged) for u in units]
     owner_repo = pr["repo"].split("/", 1)[1]
     return {
@@ -43,7 +46,7 @@ def page_data(store: Store, pr_id: int) -> dict:
             else None
         ),
         "architecture": analysis.get("architecture"),
-        "interfaces": analysis.get("interfaces", []),
+        "interfaces": interfaces,
         "has_reviews": bool(reviewed),
         "units": views,
     }
@@ -53,6 +56,7 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
     """One unit with its ranking, review state and diff rows."""
     qualname = unit["qualname"]
     old_lines, new_lines = json.loads(unit["old_lines"]), json.loads(unit["new_lines"])
+    diff = diff_rows(unit["old_body"], unit["new_body"], old_lines, new_lines)
     review = reviewed.get(qualname) or reviewed.get(unit["old_qualname"])
     if unit["fingerprint"] in reviewed_fingerprints:
         state = "seen"
@@ -74,14 +78,28 @@ def unit_view(unit, ranking, reviewed, reviewed_fingerprints, flagged) -> dict:
         "tier": ranking["tier"] if ranking else None,
         "reason": ranking["reason"] if ranking else None,
         "summary": ranking["summary"] if ranking else None,
+        "description": ranking["description"] if ranking else None,
+        "docstring": doc_line(unit["new_body"] or unit["old_body"]) if unit["kind"] != "file" else None,
         "state": state,
         "flagged": qualname in flagged,
         "language": "python" if unit["path"].endswith(".py") else None,
-        "diff": diff_rows(unit["old_body"], unit["new_body"], old_lines, new_lines),
+        "changed_lines": sum(1 for row in diff if row[0] != " "),
+        "diff": diff,
         "since_review": (
             diff_rows(review["reviewed_body"], unit["new_body"], [], new_lines) if state == "changed" else None
         ),
     }
+
+
+def doc_line(body: str) -> str | None:
+    """The first line of the docstring of a unit's body, if it has one."""
+    try:
+        tree = ast.parse(textwrap.dedent(body))
+    except SyntaxError:
+        return None
+    node = tree.body[0] if len(tree.body) == 1 and isinstance(tree.body[0], DEFS) else tree
+    doc = ast.get_docstring(node)
+    return doc.strip().splitlines()[0] if doc and doc.strip() else None
 
 
 def diff_rows(old: str, new: str, old_lines: list[int], new_lines: list[int]) -> list[list]:

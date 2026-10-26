@@ -174,11 +174,16 @@ unranked:
       "fingerprint": "…",
       "tier": "architecture | interface | behavior | detail",
       "reason": "why this tier, one line",
-      "summary": "what changes in behavior, one line"
+      "summary": "what changes in behavior, one line",
+      "description": "what the symbol does, one line, or null"
     }
   ]
 }
 ```
+
+`description` is written only for units with interface signals whose
+docstring doesn't already say what they do. All text may use
+`backticks` for code, which the report renders as inline code.
 
 **Caching:** rankings are stored by fingerprint. After a force-push,
 only units with new fingerprints are sent to Claude, so re-runs are
@@ -226,8 +231,8 @@ prs        (id, repo, number, title, url, base_sha, head_sha, merge_base,
 units      (id, pr_id, path, old_path, qualname, old_qualname, kind,
             status, old_body, new_body, old_lines, new_lines,
             fingerprint, noise, signals)
-rankings   (fingerprint PRIMARY KEY, tier, reason, summary, model,
-            created_at)
+rankings   (fingerprint PRIMARY KEY, tier, reason, summary, description,
+            model, created_at)
 reviews    (id, pr_id, qualname, fingerprint, reviewed_body, status,
             created_at)              -- status: reviewed | flagged
 comments   (id, pr_id, qualname, fingerprint, line_offset, side, body,
@@ -255,7 +260,7 @@ command opens the browser. Light and dark themes follow the system.
 
 ```
 ┌ PR #123  Add retry policy to HTTP client      ● 3 new since your last review ┐
-│ [Overview] [Architecture] [Interfaces] [Changes]       ▓▓▓▓▓░░░ 14/22 ✓  │
+│ [Overview] [Architecture] [Interfaces] [Changes]  ▓▓▓▓▒▒░░ 38% ✓ · 12% hidden │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ Overview: 3-sentence PR summary + per-component behavior bullets         │
 │                                                                          │
@@ -275,13 +280,16 @@ command opens the browser. Light and dark themes follow the system.
 
 **Tabs:**
 
-- **Overview:** PR summary, per-component behavior bullets, review
-  progress.
+- **Overview:** PR summary, per-component behavior bullets, tier
+  counts, and changed lines: the share reviewed, hidden by the noise
+  rules (by reason), and left.
 - **Architecture:** the Mermaid graph diff, the summary, new
   third-party dependencies.
 - **Interfaces:** a before/after table of signatures, model fields,
   routes, CLI options, env vars and dependencies, with the differing
-  tokens highlighted. Names link to their unit.
+  tokens highlighted. Each change has a one-line detail: a field's
+  comment, the symbol's docstring, Claude's description, or else the
+  summary of the change. Names link to their unit.
 - **Changes:** all units grouped by tier. Architecture, Interface and
   Behavior are expanded; Detail and Hidden are collapsed. Each unit
   shows its status, badges, summary, reason and diff.

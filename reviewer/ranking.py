@@ -47,6 +47,8 @@ def validate(data: object, expected: set[str], known: set[str]) -> list[str]:
         for key in ("reason", "summary"):
             if not isinstance(unit.get(key), str) or not unit[key].strip():
                 errors.append(f"units[{i}]: {key} must be a non-empty string")
+        if not isinstance(unit.get("description"), (str, type(None))):
+            errors.append(f"units[{i}]: description must be a string or null")
         ranked.add(fingerprint)
     if missing := expected - ranked:
         errors.append(f"{len(missing)} units are not ranked: {', '.join(sorted(missing))}")
