@@ -78,7 +78,8 @@ Normalizing a body:
 3. Rename local variables and parameters of the unit to canonical names
    (`_v0`, `_v1`, …) in order of first appearance. Public names,
    attributes and globals keep their names.
-4. `ast.unparse` the result, so formatting differences disappear.
+4. `ast.dump` the result, so formatting differences (including
+   redundant parentheses) disappear.
 
 `fingerprint = sha256(normalize(old_body) + "\0" + normalize(new_body))`
 
@@ -97,7 +98,8 @@ collapsed "Hidden" section with counts. Nothing is dropped silently.
 
 | Reason | Rule |
 |---|---|
-| `formatting` | raw bodies differ, `ast.unparse` output is equal |
+| `comment` | equal ASTs, different comments |
+| `formatting` | equal ASTs, same comments |
 | `docstring` | equal after removing docstrings |
 | `local-rename` | equal after canonical local renaming |
 | `symbol-rename` | a removed and an added private symbol have equal normalized bodies |
@@ -411,7 +413,5 @@ outside the diff.
 
 - Should `detail`-tier units count toward review progress, or only
   the top three tiers?
-- Normalization uses `ast.unparse`. If it turns out too sensitive (for
-  example to parenthesization), consider comparing AST dumps instead.
 - Very large PRs: is batching by package enough, or do we need a
   per-run cap on units sent to Claude?
