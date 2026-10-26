@@ -331,8 +331,11 @@ rankings   (fingerprint PRIMARY KEY, tier, reason, summary, description,
             model, created_at)
 reviews    (id, pr_id, qualname, fingerprint, reviewed_body, status,
             created_at)              -- status: reviewed | flagged
-comments   (id, pr_id, <anchor>, body, state, github_id, question_id,
-            created_at, updated_at)  -- state: draft | posted
+comments   (id, pr_id, <anchor>, body, state, github_id, github_url,
+            submission_id, posted_at, question_id, created_at,
+            updated_at)              -- state: draft | posted
+submissions (id, pr_id, github_id, event, body, url, commit_id,
+            created_at)              -- reviews posted to GitHub
 questions  (id, pr_id, <anchor>, status, resolved, session_id, workdir,
             error, created_at, updated_at)
                                      -- status: queued | running | done
@@ -434,7 +437,8 @@ command opens the browser. Light and dark themes follow the system.
 | `PUT` | `/api/units/<qualname>/review` | mark reviewed, flag, or clear |
 | `POST` | `/api/comments` | create a draft |
 | `PATCH`, `DELETE` | `/api/comments/<id>` | edit or delete a draft |
-| `POST` | `/api/review` | submit drafts as one GitHub review |
+| `POST` | `/api/review/preview` | where each draft would go, the review body, and whether the PR head moved |
+| `POST` | `/api/review` | submit drafts as one GitHub review, as previewed |
 | `POST` | `/api/questions` | ask a question at an anchor; starts an agent run |
 | `POST` | `/api/questions/<id>/messages` | ask a follow-up in the thread |
 | `GET` | `/api/questions/<id>/events` | the running answer, as server-sent events |
@@ -584,33 +588,49 @@ timeout_seconds = 300
 
 ## Posting to GitHub
 
-`POST /api/review` with `event` = `COMMENT`, `APPROVE` or
-`REQUEST_CHANGES` and an optional summary body:
+`reviewer/posting.py`. In the Drafts panel you write a summary, pick
+`COMMENT`, `APPROVE` or `REQUEST_CHANGES`, and preview. Nothing is sent
+until you confirm the preview.
 
-1. Re-fetch the PR head SHA. If it moved since the last analysis, stop
-   and ask you to re-run the analysis.
-2. Map each draft to `path` and `line` in the current head:
-   unit start line + `line_offset`.
-3. Comments on lines inside the PR diff become inline review comments.
-   Others (outside the diff, on architecture items, or on removed
-   symbols) go into the review body as
-   `On path/to/file.py \`Client.get\`: …`.
-4. Call `gh api POST /repos/{owner}/{repo}/pulls/{n}/reviews` with
-   `commit_id`, `event`, `body` and `comments`. Uses your existing `gh`
-   login; the tool never handles a token.
-5. Mark drafts `posted` and store their GitHub ids.
+1. **Preview** (`POST /api/review/preview`): read GitHub's diff of the
+   PR (`git diff --find-renames --unified=3` from the merge base to the
+   analyzed head, in the cached clone), map every draft onto it, build
+   the body, and fetch the PR's current head SHA. The page shows the
+   inline comments, what goes in the body and why, what isn't posted,
+   the body itself, and a warning when the head moved.
+2. **Mapping:** a draft's anchor resolves to its current file lines.
+   - A `line` draft on a line GitHub's diff shows (a changed line or one
+     of the three lines of context) becomes an inline comment, `side`
+     `RIGHT`, or `LEFT` for a removed line. Renamed files use the new
+     path on both sides.
+   - A `range` draft within one hunk becomes a multi-line comment
+     (`start_line`, `start_side`, `line`, `side`). One that spans hunks
+     goes on its last line, saying which lines it covers.
+   - A draft on a line outside the diff, and a `unit` draft, go in the
+     body as `**On \`Client.get\` in \`http/client.py\`, line 42:**`
+     followed by the comment.
+   - `pr` drafts follow the summary in the body.
+   - Orphaned drafts are left out unless you tick "Put orphaned drafts
+     in the review body".
+3. **Text** is unwrapped: the lines of each paragraph and list item are
+   joined, since GitHub keeps line breaks inside a paragraph. Code
+   blocks, quotes, headings, tables and hard breaks stay as they are.
+4. **Post** (`POST /api/review`): the page sends the event, the summary
+   and the draft ids and head SHA of the preview. The server stops if
+   the PR head moved since the analysis (run `/review-pr` again and
+   check your drafts) or if the drafts changed since the preview.
+   Otherwise it calls `gh api --method POST
+   repos/{owner}/{repo}/pulls/{n}/reviews --input -` with `commit_id`
+   (the analyzed head), `event`, `body` and `comments`. It uses your
+   `gh` login; the tool never handles a token.
+5. **Record:** the review is stored in `submissions`. Each posted draft
+   becomes `posted` with the id and link of its inline comment (matched
+   by path and body from the review's comments), or the review's link
+   when it went in the body. Posted drafts can't be edited and show a
+   link to GitHub where they are anchored.
 
-A `range` draft inside the diff becomes a multi-line comment
-(`start_line` and `line`). `unit` drafts go into the body, and `pr`
-drafts are joined into it. Text sent to GitHub is never hard-wrapped:
-each paragraph is one line.
-
-Before anything is sent, the report shows what will be posted, where,
-and with which event, and asks you to confirm.
-
-**Drafts across force-pushes** follow the [anchor](#anchors) rules:
-an orphaned draft is shown in the drafts panel instead of being lost,
-and is posted only if you move it or keep it for the review body.
+GitHub's own errors, such as approving your own PR or an existing
+pending review, are shown as they come, and the drafts stay drafts.
 
 ## CLI
 
@@ -684,8 +704,9 @@ repository and stub out `gh`:
 - route, model field, env var and CLI changes are detected
 
 The server and GitHub posting are tested with `gh` stubbed out. The
-comment-to-line mapping gets its own unit tests, including lines
-outside the diff and multi-line ranges. Anchors get tests for
+comment-to-line mapping gets its own unit tests on real `git diff`
+output, including lines outside the diff, removed lines, renames,
+multi-line ranges within and across hunks, and unwrapping. Anchors get tests for
 following a symbol, going stale and being orphaned across a
 force-push. The agent is tested with a stub command that prints a
 recorded `stream-json` transcript: streaming, sources, resuming a

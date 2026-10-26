@@ -71,10 +71,23 @@ CREATE TABLE IF NOT EXISTS comments (
     ANCHOR,
     body TEXT NOT NULL,
     state TEXT NOT NULL,             -- draft | posted
-    github_id INTEGER,
+    github_id INTEGER,               -- the inline comment's id on GitHub
+    github_url TEXT,                 -- the comment, or the review whose body holds it
+    submission_id INTEGER,           -- the review it was posted in
+    posted_at TEXT,
     question_id INTEGER,             -- the question it was drafted from
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS submissions (
+    id INTEGER PRIMARY KEY,
+    pr_id INTEGER NOT NULL REFERENCES prs (id) ON DELETE CASCADE,
+    github_id INTEGER NOT NULL,
+    event TEXT NOT NULL,             -- COMMENT | APPROVE | REQUEST_CHANGES
+    body TEXT NOT NULL,
+    url TEXT,
+    commit_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS questions (
     id INTEGER PRIMARY KEY,
@@ -154,7 +167,11 @@ class Store:
 
     def _migrate(self) -> None:
         """Add columns that databases created by earlier versions lack."""
-        added = {"rankings": ("description", "attention", "highlights", "sections"), "pr_summary": ("walkthrough",)}
+        added = {
+            "rankings": ("description", "attention", "highlights", "sections"),
+            "pr_summary": ("walkthrough",),
+            "comments": ("github_url", "submission_id", "posted_at"),
+        }
         with self.conn:
             for table, wanted in added.items():
                 columns = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
@@ -389,3 +406,28 @@ class Store:
                 "INSERT INTO messages (question_id, role, body, sources, created_at) VALUES (?, ?, ?, ?, ?)",
                 (question_id, role, body, json.dumps(sources or []), now()),
             ).lastrowid
+
+    def add_submission(self, pr_id: int, github_id: int, event: str, body: str, url: str | None, commit_id: str) -> int:
+        with self.lock, self.conn:
+            return self.conn.execute(
+                """
+                INSERT INTO submissions (pr_id, github_id, event, body, url, commit_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (pr_id, github_id, event, body, url, commit_id, now()),
+            ).lastrowid
+
+    def submissions(self, pr_id: int) -> list[sqlite3.Row]:
+        with self.lock:
+            return self.conn.execute("SELECT * FROM submissions WHERE pr_id = ? ORDER BY id", (pr_id,)).fetchall()
+
+    def mark_posted(self, comment_id: int, submission_id: int, github_id: int | None, url: str | None) -> None:
+        with self.lock, self.conn:
+            self.conn.execute(
+                """
+                UPDATE comments SET state = 'posted', submission_id = ?, github_id = ?, github_url = ?,
+                    posted_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (submission_id, github_id, url, now(), now(), comment_id),
+            )

@@ -3,8 +3,9 @@
 Review GitHub pull requests by what matters: architecture, interfaces
 and behavior. Renames, comments, docstrings and formatting are filtered
 out, and what you reviewed is remembered across force-pushes. From
-the report you can draft comments and ask Claude about any line, unit
-or paragraph. Python repositories only, for now.
+the report you can ask Claude about any line, unit or paragraph, draft
+comments, and post them as a GitHub review. Python repositories only,
+for now.
 
 See [docs/design.md](docs/design.md) for how it works.
 
@@ -50,8 +51,9 @@ In the report, hover a line and click **+**, or select lines or
 walkthrough text, to write a comment draft or ask Claude about it
 (keys `c` and `a`). Questions run `claude -p` in a checkout of the PR
 head, with read-only file tools and web search, using your Claude Code
-login and default model. Questions are private; drafts stay local
-until posting lands.
+login and default model. Questions are private. Drafts stay local
+until you submit them from the Drafts panel: preview where each one
+goes, then post them as one GitHub review through `gh`.
 
 Data lives in `~/.local/share/reviewer` and repository clones in
 `~/.cache/reviewer`; set `REVIEWER_DATA_DIR` and `REVIEWER_CACHE_DIR`

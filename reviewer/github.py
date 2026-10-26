@@ -32,9 +32,9 @@ class PrRef:
         return f"{self.owner}/{self.repo}#{self.number}"
 
 
-def gh(*args: str) -> str:
+def gh(*args: str, input: str | None = None) -> str:
     try:
-        result = subprocess.run(["gh", *args], capture_output=True, text=True)
+        result = subprocess.run(["gh", *args], input=input, capture_output=True, text=True)
     except FileNotFoundError:
         raise GitHubError("gh is not installed or not on PATH") from None
     if result.returncode:
@@ -89,3 +89,19 @@ def pr_metadata(pr: PrRef) -> dict:
 
 def clone_bare(pr: PrRef, path: str) -> None:
     gh("repo", "clone", pr.repo_arg, path, "--", "--bare", "--quiet")
+
+
+def head_sha(pr: PrRef) -> str:
+    """The PR's head commit on GitHub now."""
+    return json.loads(gh("pr", "view", str(pr.number), "-R", pr.repo_arg, "--json", "headRefOid"))["headRefOid"]
+
+
+def create_review(pr: PrRef, payload: dict) -> dict:
+    """Submit a review: POST /repos/{owner}/{repo}/pulls/{n}/reviews."""
+    path = f"repos/{pr.owner}/{pr.repo}/pulls/{pr.number}/reviews"
+    return json.loads(gh("api", "--hostname", pr.host, "--method", "POST", path, "--input", "-", input=json.dumps(payload)))
+
+
+def review_comments(pr: PrRef, review_id: int) -> list[dict]:
+    path = f"repos/{pr.owner}/{pr.repo}/pulls/{pr.number}/reviews/{review_id}/comments?per_page=100"
+    return json.loads(gh("api", "--hostname", pr.host, path))

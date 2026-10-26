@@ -18,10 +18,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from reviewer import repo
+from reviewer import github, repo
 from reviewer.agent import Agents
 from reviewer.anchors import AnchorError, make_anchor
 from reviewer.config import AgentConfig
+from reviewer.posting import GitHubPoster, PlanError, match_posted, parse_diff, plan_review
 from reviewer.report import FLAGGED, REVIEWED, page_data
 from reviewer.store import Store
 from reviewer.threads import comment_view, first_prompt, question_view, stored_walkthrough, thread_data
@@ -46,6 +47,7 @@ class ReportServer(ThreadingHTTPServer):
         port: int = 0,
         agent_config: AgentConfig | None = None,
         workdir: Callable[[], Path] | None = None,
+        poster=None,
     ):
         super().__init__(("127.0.0.1", port), Handler)
         self.store = store
@@ -55,6 +57,7 @@ class ReportServer(ThreadingHTTPServer):
         self.agent_config = agent_config or AgentConfig()
         self.workdir = workdir or self._worktree
         self.agents = Agents(store, self.agent_config, self.question_view, pr_id)
+        self.poster = poster or GitHubPoster(store.pr_by_id(pr_id))
 
     @property
     def url(self) -> str:
@@ -143,6 +146,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid JSON"})
         if not isinstance(body, dict):
             return self._json(HTTPStatus.BAD_REQUEST, {"error": "expected a JSON object"})
+        if method == "POST" and path in ("/api/review/preview", "/api/review"):
+            # These wait on GitHub, so they take the lock only while they
+            # use the store.
+            return self._review(body, submit=path == "/api/review")
         with self.server.store.lock:
             self._route(method, path, body)
 
@@ -226,6 +233,72 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(HTTPStatus.BAD_REQUEST, {"error": "a comment needs a body"})
         store.update_comment(comment_id, text)
         self._json(HTTPStatus.OK, self._comment_view(comment_id))
+
+    # Posting a review
+
+    def _review(self, body, submit):
+        """Preview or post the drafts as one review. The preview says what
+        goes where; posting checks that the drafts and the PR head are
+        still the ones previewed."""
+        store, server = self.server.store, self.server
+        with store.lock:
+            pr = store.pr_by_id(server.pr_id)
+            units = store.units(server.pr_id)
+            walkthrough = stored_walkthrough(store.summary(server.pr_id))
+            drafts = [comment_view(c, units, walkthrough) for c in store.comments(server.pr_id) if c["state"] == "draft"]
+            try:
+                files = parse_diff(server.poster.diff(pr["merge_base"], pr["head_sha"]))
+            except repo.GitError as e:
+                return self._json(HTTPStatus.CONFLICT, {"error": f"can't read the PR's diff: {e}"})
+            summary = body.get("body") or ""
+            if not isinstance(summary, str):
+                return self._json(HTTPStatus.BAD_REQUEST, {"error": "body must be text"})
+            try:
+                plan = plan_review(drafts, {u["qualname"]: u for u in units}, files, body.get("event"), summary,
+                                   bool(body.get("include_orphaned")))
+            except PlanError as e:
+                return self._json(HTTPStatus.BAD_REQUEST, {"error": str(e)})
+        try:
+            remote = server.poster.head_sha()
+        except github.GitHubError as e:
+            return self._json(HTTPStatus.BAD_GATEWAY, {"error": f"can't reach GitHub: {e}"})
+        preview = {
+            "event": plan.event,
+            "body": plan.body,
+            "comments": [c["payload"] | {"draft": c["draft"]} for c in plan.comments],
+            "placed": plan.placed,
+            "drafts": sorted(p["draft"] for p in plan.placed if p["where"] != "skipped"),
+            "head_sha": pr["head_sha"],
+            "remote_head_sha": remote,
+            "head_moved": remote != pr["head_sha"],
+        }
+        if not submit:
+            return self._json(HTTPStatus.OK, preview)
+
+        if preview["head_moved"]:
+            return self._json(HTTPStatus.CONFLICT, {
+                "error": f"the PR has new commits ({remote[:7]}) since it was analyzed; "
+                         "run /review-pr again, check your drafts, then post",
+            })
+        if body.get("drafts") != preview["drafts"] or body.get("head_sha") != pr["head_sha"]:
+            return self._json(HTTPStatus.CONFLICT, {"error": "the drafts changed since the preview; preview again"})
+        try:
+            review = server.poster.create_review(plan.payload(pr["head_sha"]))
+        except github.GitHubError as e:
+            return self._json(HTTPStatus.BAD_GATEWAY, {"error": f"GitHub didn't take the review: {e}"})
+        try:
+            posted = match_posted(plan, server.poster.review_comments(review["id"])) if plan.comments else {}
+        except github.GitHubError:
+            posted = {}  # the review is posted; only the comments' links are missing
+        url = review.get("html_url")
+        with store.lock:
+            submission_id = store.add_submission(server.pr_id, review["id"], plan.event, plan.body, url, pr["head_sha"])
+            for place in plan.placed:
+                if place["where"] == "skipped":
+                    continue
+                comment = posted.get(place["draft"], {})
+                store.mark_posted(place["draft"], submission_id, comment.get("id"), comment.get("html_url") or url)
+            self._json(HTTPStatus.CREATED, {"url": url, "event": plan.event} | thread_data(store, server.pr_id, server.agents.running))
 
     # Questions
 

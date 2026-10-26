@@ -80,6 +80,9 @@ const ui = {
   expanded: new Set(), // resolved questions shown in full
   streams: new Map(), // question id -> {status, text, sources, notices}: a running answer
   drawer: null, // "questions" | "drafts": the open side panel
+  // The review being submitted: its event and summary, and the preview
+  // the server made of it, which posting must match.
+  submit: { event: "COMMENT", body: "", includeOrphaned: false, preview: null, busy: false, error: null, posted: null },
 };
 const sockets = new Map(); // question id -> EventSource
 
@@ -1351,6 +1354,7 @@ async function submitComposer() {
       listen(question.id);
     } else {
       data.comments.push(await api("POST", "/api/comments", { anchor: anchorInput(composer.anchor), body: text }));
+      invalidatePreview();
     }
     ui.composer = null;
     refreshFor(composer.anchor);
@@ -1580,6 +1584,7 @@ async function draftFromAnswer(q, answer) {
   try {
     const comment = await api("POST", "/api/comments", { anchor, body, question_id: q.id });
     data.comments.push(comment);
+    invalidatePreview();
     ui.editing.set(comment.id, comment.body);
     refreshFor(comment.anchor);
     const area = document.querySelector(`[data-thread="c:${comment.id}"] textarea`);
@@ -1598,6 +1603,7 @@ function commentCard(c, inDrawer = false) {
       ? el("a", { href: "#", class: "thread-where", onclick: (e) => { e.preventDefault(); jumpTo(c.anchor); } }, anchorLabel(c.anchor, true))
       : el("span", { class: "thread-where", text: c.state === "draft" ? "Draft comment" : "Posted comment" }),
     anchorChips(c.anchor),
+    c.state === "posted" && c.github_url && el("a", { href: c.github_url, target: "_blank", rel: "noopener", class: "chip added", text: "on GitHub ↗" }),
     c.question_id && el("span", { class: "chip ask", text: "from a question" }),
     el("span", { class: "spacer" }),
     c.state === "draft" && editing === undefined && el("button", { class: "link-button", text: "Edit", onclick: () => { ui.editing.set(c.id, c.body); refreshFor(c.anchor); } }),
@@ -1634,6 +1640,7 @@ async function saveComment(c) {
     const updated = await api("PATCH", `/api/comments/${c.id}`, { body });
     ui.editing.delete(c.id);
     data.comments[data.comments.findIndex((x) => x.id === c.id)] = updated;
+    invalidatePreview();
     refreshFor(updated.anchor);
   } catch (error) {
     toast(`Couldn't save: ${error.message}`);
@@ -1646,6 +1653,7 @@ async function deleteComment(c) {
     await api("DELETE", `/api/comments/${c.id}`);
     ui.editing.delete(c.id);
     data.comments = data.comments.filter((x) => x.id !== c.id);
+    invalidatePreview();
     refreshFor(c.anchor);
   } catch (error) {
     toast(`Couldn't delete: ${error.message}`);
@@ -1708,10 +1716,168 @@ function renderDrawer() {
       ),
       el("button", { class: "icon-button", title: "Close", text: "✕", onclick: () => { ui.drawer = null; renderDrawer(); renderInbox(); } }),
     ),
-    ui.drawer === "drafts" && drafts.length > 0 && el("p", { class: "drawer-note", text: "Drafts stay local. Posting them as a GitHub review comes next." }),
-    el("div", { class: "drawer-body" }, list.length ? list : el("p", { class: "empty", text: empty })),
+    el("div", { class: "drawer-body" },
+      ui.drawer === "drafts" && (drafts.length > 0 || ui.submit.posted) && submitCard(drafts),
+      list.length ? list : el("p", { class: "empty", text: empty }),
+      ui.drawer === "drafts" && postedReviews(),
+    ),
   );
   drawer.hidden = false;
+}
+
+// Submitting drafts as one GitHub review: write a summary, pick the
+// event, preview where every draft goes, then post.
+
+const EVENTS = [
+  { key: "COMMENT", label: "Comment" },
+  { key: "APPROVE", label: "Approve" },
+  { key: "REQUEST_CHANGES", label: "Request changes" },
+];
+
+function invalidatePreview() {
+  ui.submit.preview = null;
+  ui.submit.error = null;
+}
+
+function submitCard(drafts) {
+  const submit = ui.submit;
+  const orphaned = drafts.filter((c) => c.anchor.state === "orphaned").length;
+  const change = (update) => { Object.assign(submit, update); invalidatePreview(); renderDrawer(); };
+  const card = el("div", { class: "submit-card" }, el("h3", { text: "Submit review" }));
+  if (submit.posted && !drafts.length) {
+    card.append(el("p", { class: "posted-note" }, "✓ Posted. ", el("a", { href: submit.posted, target: "_blank", rel: "noopener", text: "View the review on GitHub ↗" })));
+    return card;
+  }
+  const summary = el("textarea", {
+    rows: "3",
+    placeholder: "Summary for the review body (optional for a comment or approval)",
+    disabled: submit.busy,
+    oninput: (e) => { submit.body = e.target.value; if (submit.preview) { invalidatePreview(); renderDrawer(); restoreFocus(".submit-card textarea"); } },
+  });
+  summary.value = submit.body;
+  card.append(...[
+    summary,
+    el("div", { class: "segmented small", role: "group", "aria-label": "Review event" },
+      EVENTS.map((e) => el("button", { "aria-pressed": String(submit.event === e.key), disabled: submit.busy, onclick: () => change({ event: e.key }) }, e.label)),
+    ),
+    orphaned > 0 && el("label", { class: "check" },
+      el("input", { type: "checkbox", checked: submit.includeOrphaned, onchange: (e) => change({ includeOrphaned: e.target.checked }) }),
+      ` Put ${plural(orphaned, "orphaned draft")} in the review body`,
+    ),
+  ].filter(Boolean));
+  if (submit.error) card.append(el("p", { class: "thread-error", text: submit.error }));
+  if (!submit.preview) {
+    card.append(el("div", { class: "composer-foot" },
+      el("span", { class: "hint", text: "Nothing is posted until you confirm the preview." }),
+      el("button", { class: "button primary", disabled: submit.busy, onclick: previewReview }, submit.busy ? "Checking…" : "Preview review"),
+    ));
+    return card;
+  }
+  card.append(previewView(submit.preview));
+  const label = EVENTS.find((e) => e.key === submit.preview.event).label;
+  card.append(el("div", { class: "composer-foot" },
+    el("span", { class: "hint", text: `Posts as you, through gh, to ${data.pr.repo}#${data.pr.number}.` }),
+    el("button", { class: "button", disabled: submit.busy, text: "Back", onclick: () => { invalidatePreview(); renderDrawer(); } }),
+    el("button", {
+      class: `button primary ${submit.preview.event === "REQUEST_CHANGES" ? "danger" : ""}`,
+      disabled: submit.busy || submit.preview.head_moved,
+      onclick: postReview,
+    }, submit.busy ? "Posting…" : `Post: ${label}`),
+  ));
+  return card;
+}
+
+function restoreFocus(selector) {
+  const node = document.querySelector(selector);
+  if (!node) return;
+  node.focus();
+  node.setSelectionRange?.(node.value.length, node.value.length);
+}
+
+function previewView(preview) {
+  const drafts = new Map(data.comments.map((c) => [c.id, c]));
+  const group = (where, title) => {
+    const places = preview.placed.filter((p) => p.where === where);
+    if (!places.length) return null;
+    return el("div", { class: "preview-group" },
+      el("div", { class: "preview-title", text: `${title} (${places.length})` }),
+      el("ul", {}, places.map((p) => el("li", {},
+        el("code", { class: "inline", text: p.label }),
+        el("span", { class: "muted", text: ` ${excerpt(drafts.get(p.draft)?.body)}` }),
+        p.reason && el("div", { class: "preview-reason", text: p.reason }),
+      ))),
+    );
+  };
+  return el("div", { class: "preview" },
+    preview.head_moved && el("p", { class: "notice danger" },
+      `The PR has new commits (${preview.remote_head_sha.slice(0, 7)}) since it was analyzed at ${preview.head_sha.slice(0, 7)}. `,
+      "Run /review-pr again and check your drafts before posting."),
+    group("inline", "Inline comments"),
+    group("body", "In the review body"),
+    group("skipped", "Not posted"),
+    el("div", { class: "preview-title", text: "Review body" }),
+    preview.body ? el("div", { class: "preview-body" }, markdown(preview.body, "msg-body")) : el("p", { class: "muted", text: "No body." }),
+  );
+}
+
+function excerpt(text, length = 70) {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > length ? `${flat.slice(0, length)}…` : flat;
+}
+
+async function previewReview() {
+  const submit = ui.submit;
+  submit.busy = true;
+  submit.error = null;
+  renderDrawer();
+  try {
+    submit.preview = await api("POST", "/api/review/preview", { event: submit.event, body: submit.body, include_orphaned: submit.includeOrphaned });
+  } catch (error) {
+    submit.error = error.message;
+  }
+  submit.busy = false;
+  renderDrawer();
+}
+
+async function postReview() {
+  const submit = ui.submit;
+  const preview = submit.preview;
+  submit.busy = true;
+  submit.error = null;
+  renderDrawer();
+  try {
+    const result = await api("POST", "/api/review", {
+      event: preview.event,
+      body: submit.body,
+      include_orphaned: submit.includeOrphaned,
+      drafts: preview.drafts,
+      head_sha: preview.head_sha,
+    });
+    Object.assign(data, { comments: result.comments, questions: result.questions, submissions: result.submissions });
+    Object.assign(submit, { body: "", preview: null, posted: result.url || "#" });
+    renderWalkthrough();
+    renderChanges();
+    renderInbox();
+    toast("Review posted to GitHub.");
+  } catch (error) {
+    submit.error = error.message;
+  }
+  submit.busy = false;
+  renderDrawer();
+}
+
+function postedReviews() {
+  if (!data.submissions?.length) return null;
+  const labels = Object.fromEntries(EVENTS.map((e) => [e.key, e.label]));
+  return el("div", { class: "posted-reviews" },
+    el("div", { class: "preview-title", text: "Posted reviews" }),
+    el("ul", {}, [...data.submissions].reverse().map((s) =>
+      el("li", {},
+        s.url ? el("a", { href: s.url, target: "_blank", rel: "noopener", text: `${labels[s.event] || s.event} ↗` }) : labels[s.event],
+        el("span", { class: "muted", text: ` · ${new Date(s.created_at).toLocaleString()}` }),
+      ),
+    )),
+  );
 }
 
 // Selecting code in a diff, or text in the walkthrough, offers to comment

@@ -108,8 +108,9 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
 5. **Open the report.** Run `reviewer serve <pr>` (same `<pr>` and
    `--repo`) in the background. It prints the report's URL and opens
    it in the browser. There the user marks units reviewed and flags
-   them, drafts comments, and asks Claude about any line, unit or
-   walkthrough paragraph; this state survives force-pushes. Questions
+   them, drafts comments and posts them as a GitHub review, and asks
+   Claude about any line, unit or walkthrough paragraph; this state
+   survives force-pushes. Questions
    are answered by a separate headless Claude Code run, not by you.
 
 6. **Report to the user.** Give the report URL and a short summary in

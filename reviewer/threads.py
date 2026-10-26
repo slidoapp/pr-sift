@@ -24,6 +24,8 @@ def comment_view(row, units, walkthrough) -> dict:
         "body": row["body"],
         "state": row["state"],
         "question_id": row["question_id"],
+        "github_url": row["github_url"],
+        "posted_at": row["posted_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -56,6 +58,10 @@ def thread_data(store: Store, pr_id: int, running) -> dict:
     questions = store.questions(pr_id)
     messages = store.messages(q["id"] for q in questions)
     return {
+        "submissions": [
+            {"id": s["id"], "event": s["event"], "url": s["url"], "created_at": s["created_at"]}
+            for s in store.submissions(pr_id)
+        ],
         "comments": [comment_view(c, units, walkthrough) for c in store.comments(pr_id)],
         "questions": [question_view(q, messages[q["id"]], units, walkthrough, running(q["id"])) for q in questions],
     }
