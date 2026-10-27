@@ -234,6 +234,20 @@ def test_posting_stops_when_the_head_moved_or_the_drafts_changed(server):
     assert server.poster.posted == []
 
 
+def test_head_reports_whether_the_pr_moved_since_the_analysis(server, monkeypatch):
+    assert call(server, "GET", "/api/head") == (200, {"head_sha": "head1", "remote_head_sha": "head1", "head_moved": False})
+
+    server.poster.head = "head2"
+    assert call(server, "GET", "/api/head")[1]["head_moved"] is True
+
+    def unreachable():
+        raise GitHubError("offline")
+
+    monkeypatch.setattr(server.poster, "head_sha", unreachable)
+    status, error = call(server, "GET", "/api/head")
+    assert status == 502 and "offline" in error["error"]
+
+
 def test_a_rejected_review_keeps_the_drafts(server):
     add_drafts(server)
     _, preview = call(server, "POST", "/api/review/preview", {"event": "APPROVE"})

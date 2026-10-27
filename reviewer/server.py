@@ -115,6 +115,9 @@ class Handler(BaseHTTPRequestHandler):
             if self._authorized():
                 with self.server.store.lock:
                     self._json(HTTPStatus.OK, self.server.page())
+        elif path == "/api/head":
+            if self._authorized():
+                self._head()
         elif (match := QUESTION.match(path)) and match[2] == "/events":
             # EventSource can't send headers: the token comes in the query.
             token = parse_qs(urlsplit(self.path).query).get("token", [""])[0]
@@ -403,6 +406,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.FORBIDDEN, {"error": "unexpected Host"})
             return None
         return urlsplit(self.path).path
+
+    def _head(self):
+        """Whether the PR moved on since the analysis the report shows."""
+        head = self.server.store.pr_by_id(self.server.pr_id)["head_sha"]
+        try:
+            remote = self.server.poster.head_sha()
+        except github.GitHubError as e:
+            return self._json(HTTPStatus.BAD_GATEWAY, {"error": f"can't reach GitHub: {e}"})
+        self._json(HTTPStatus.OK, {"head_sha": head, "remote_head_sha": remote, "head_moved": remote != head})
 
     def _authorized(self, token=None):
         given = token if token is not None else self.headers.get("X-Reviewer-Token", "")

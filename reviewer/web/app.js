@@ -283,6 +283,27 @@ function renderBanner() {
   banner.hidden = false;
 }
 
+// The report shows one analysis; warn when the PR has commits it doesn't
+// cover. A failed check shows nothing, as the report itself still works.
+async function renderHeadBanner() {
+  let head;
+  try {
+    head = await api("GET", "/api/head");
+  } catch {
+    return;
+  }
+  const banner = document.getElementById("head-banner");
+  banner.hidden = !head.head_moved;
+  if (!head.head_moved) return;
+  banner.replaceChildren(
+    el("strong", { text: "This report is out of date." }),
+    " ",
+    el("span", { text: `The PR is at ${head.remote_head_sha.slice(0, 7)}, but the report was built from ${head.head_sha.slice(0, 7)}. Run ` }),
+    el("code", { class: "inline", text: "/review-pr" }),
+    el("span", { text: " again to see the new commits; your review marks and drafts are kept." }),
+  );
+}
+
 // Walkthrough: the story of the change, top-down, with code where needed
 
 function renderWalkthrough() {
@@ -2166,6 +2187,7 @@ async function main() {
   renderInbox();
   renderProgress();
   renderBanner();
+  renderHeadBanner();
   renderWalkthrough();
   renderInterfaces();
   renderChanges();

@@ -190,6 +190,10 @@ main.wrap { padding-top: 20px; padding-bottom: 40px; min-height: 60vh; }
   font-size: 14px;
 }
 .banner button { margin-left: 8px; }
+.banner.stale {
+  border-color: color-mix(in srgb, var(--del-fg) 35%, transparent);
+  background: var(--del-bg);
+}
 
 .footer { color: var(--faint); font-size: 13px; padding-bottom: 32px; }
 
