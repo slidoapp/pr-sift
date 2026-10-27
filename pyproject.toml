@@ -3,6 +3,8 @@ name = "pr-sift"
 version = "0.1.0"
 description = "Review GitHub pull requests by what matters: architecture, interfaces, behavior."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = []
 

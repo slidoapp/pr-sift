@@ -77,3 +77,7 @@ timeout_seconds = 300
 uv sync
 uv run pytest
 ```
+
+## License
+
+[MIT](LICENSE)
