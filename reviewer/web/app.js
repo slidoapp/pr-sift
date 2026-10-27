@@ -901,7 +901,9 @@ function unitBody(u) {
       ),
     ),
   );
-  if (view === "since") body.append(renderDiff(u.since_review, u.language, u.qualname, [], u.highlights, null, [], null));
+  // Lines removed since the review have no number at head, so only the
+  // current lines can be commented on.
+  if (view === "since") body.append(renderDiff(u.since_review, u.language, u.qualname, [], u.highlights, null, []));
   else body.append(renderDiff(u.diff, u.language, u.qualname, u.folds, u.highlights, view === "key" ? u.key_lines : null, u.sections, u.qualname));
   return body;
 }
