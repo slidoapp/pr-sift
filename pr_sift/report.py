@@ -4,12 +4,12 @@ import ast
 import json
 import textwrap
 
-from reviewer.diffs import diff_rows
-from reviewer.folds import Fold, find_folds
-from reviewer.skeleton import skeleton_lines
-from reviewer.ranking import to_lines
-from reviewer.store import Store
-from reviewer.units import DEFS, module_name
+from pr_sift.diffs import diff_rows
+from pr_sift.folds import Fold, find_folds
+from pr_sift.skeleton import skeleton_lines
+from pr_sift.ranking import to_lines
+from pr_sift.store import Store
+from pr_sift.units import DEFS, module_name
 
 REVIEWED, FLAGGED = "reviewed", "flagged"
 

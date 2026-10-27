@@ -7,7 +7,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from reviewer import github
+from pr_sift import github
 
 # Bytes of a file checked for NUL to decide it is binary, as git does.
 BINARY_PROBE = 8000
@@ -18,7 +18,7 @@ class GitError(RuntimeError):
 
 
 def cache_dir() -> Path:
-    return Path(os.environ.get("REVIEWER_CACHE_DIR", "~/.cache/reviewer")).expanduser()
+    return Path(os.environ.get("PR_SIFT_CACHE_DIR", "~/.cache/pr-sift")).expanduser()
 
 
 def git(git_dir: Path, *args: str, input: bytes | None = None) -> bytes:
@@ -43,8 +43,8 @@ def fetch_pr(git_dir: Path, number: int, base_ref: str) -> None:
         "--quiet",
         "--force",
         "origin",
-        f"+refs/pull/{number}/head:refs/reviewer/pull/{number}",
-        f"+refs/heads/{base_ref}:refs/reviewer/base/{base_ref}",
+        f"+refs/pull/{number}/head:refs/pr-sift/pull/{number}",
+        f"+refs/heads/{base_ref}:refs/pr-sift/base/{base_ref}",
     )
 
 
@@ -102,7 +102,7 @@ def worktree(repo_key: str, number: int, sha: str) -> Path:
     clone. Older checkouts of the same PR are removed."""
     git_dir = clone_path(repo_key)
     if not (git_dir / "HEAD").exists():
-        raise GitError(f"no cached clone of {repo_key}; run reviewer analyze first")
+        raise GitError(f"no cached clone of {repo_key}; run pr-sift analyze first")
     parent = cache_dir() / "worktrees" / repo_key / f"pr-{number}"
     path = parent / sha[:12]
     if (path / ".git").exists():

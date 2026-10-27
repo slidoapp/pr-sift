@@ -1,8 +1,8 @@
 from textwrap import dedent
 
-from reviewer.interfaces import annotate, diff_interfaces, extract_interfaces
-from reviewer.noise import classify
-from reviewer.units import diff_files
+from pr_sift.interfaces import annotate, diff_interfaces, extract_interfaces
+from pr_sift.noise import classify
+from pr_sift.units import diff_files
 
 
 def changes(old, new, path="pkg/mod.py"):

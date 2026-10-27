@@ -43,5 +43,5 @@ def git_repo(tmp_path):
 
 @pytest.fixture(autouse=True)
 def isolated_dirs(tmp_path, monkeypatch):
-    monkeypatch.setenv("REVIEWER_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("REVIEWER_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("PR_SIFT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PR_SIFT_CACHE_DIR", str(tmp_path / "cache"))

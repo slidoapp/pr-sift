@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from reviewer import cli, github, repo
-from reviewer.analysis import analyze_revisions
-from reviewer.store import Store
+from pr_sift import cli, github, repo
+from pr_sift.analysis import analyze_revisions
+from pr_sift.store import Store
 
 BASE = {
     "pyproject.toml": '[project]\ndependencies = ["requests"]\n',
@@ -151,8 +151,8 @@ def test_ingest_before_analyze_fails(tmp_path, capsys):
 
 
 def test_unit_diff_uses_file_line_numbers():
-    from reviewer.analysis import unit_diff
-    from reviewer.units import diff_files
+    from pr_sift.analysis import unit_diff
+    from pr_sift.units import diff_files
 
     old = "X = 1\n\n\ndef f():\n    a = 1\n    return a\n"
     new = "X = 1\n\n\ndef f():\n    a = 2\n    return a\n"

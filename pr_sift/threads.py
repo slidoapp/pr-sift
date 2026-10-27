@@ -3,9 +3,9 @@ prompt that gives the agent a question's context."""
 
 import json
 
-from reviewer.anchors import resolve
-from reviewer.diffs import diff_rows
-from reviewer.store import Store
+from pr_sift.anchors import resolve
+from pr_sift.diffs import diff_rows
+from pr_sift.store import Store
 
 # Diff rows of the asked-about unit sent with the first question.
 MAX_PROMPT_ROWS = 400

@@ -9,7 +9,7 @@ import posixpath
 from collections.abc import Iterable
 from fnmatch import fnmatch
 
-from reviewer.units import FUNCS, Unit, is_public, normalize, strip_docstrings
+from pr_sift.units import FUNCS, Unit, is_public, normalize, strip_docstrings
 
 DEFAULT_GENERATED = ("*.lock", "package-lock.json", "*_pb2.py", "*_pb2_grpc.py")
 

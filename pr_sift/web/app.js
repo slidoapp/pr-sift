@@ -1,13 +1,13 @@
 // The report page: renders /api/pr and keeps review state in sync.
 
-const TOKEN = document.querySelector('meta[name="reviewer-token"]').content;
+const TOKEN = document.querySelector('meta[name="pr-sift-token"]').content;
 
 const TIERS = [
   { key: "architecture", label: "Architecture", desc: "Structure and dependencies between components" },
   { key: "interface", label: "Interface", desc: "What callers and clients depend on" },
   { key: "behavior", label: "Behavior", desc: "Logic worth understanding" },
   { key: "detail", label: "Detail", desc: "Local changes that don't change what a component does" },
-  { key: "unranked", label: "Not ranked yet", desc: "Run /review-pr to rank these" },
+  { key: "unranked", label: "Not ranked yet", desc: "Run /pr-sift to rank these" },
   { key: "skim", label: "Skim", desc: "Repetitive or low-risk: the summary is enough" },
   { key: "hidden", label: "Hidden", desc: "Noise: nothing a reviewer needs to see" },
 ];
@@ -140,7 +140,7 @@ function citation(text) {
 
 function loadPrefs() {
   try {
-    const prefs = JSON.parse(localStorage.getItem("reviewer:prefs") || "{}");
+    const prefs = JSON.parse(localStorage.getItem("pr-sift:prefs") || "{}");
     if (FILTERS.some((f) => f.key === prefs.filter)) ui.filter = prefs.filter;
     if (Array.isArray(prefs.closedTiers)) ui.closedTiers = new Set(prefs.closedTiers);
   } catch {
@@ -150,7 +150,7 @@ function loadPrefs() {
 
 function savePrefs() {
   try {
-    localStorage.setItem("reviewer:prefs", JSON.stringify({ filter: ui.filter, closedTiers: [...ui.closedTiers] }));
+    localStorage.setItem("pr-sift:prefs", JSON.stringify({ filter: ui.filter, closedTiers: [...ui.closedTiers] }));
   } catch {
     // Ignore.
   }
@@ -159,7 +159,7 @@ function savePrefs() {
 async function api(method, path, body) {
   const response = await fetch(path, {
     method,
-    headers: { "X-Reviewer-Token": TOKEN, "Content-Type": "application/json" },
+    headers: { "X-PR-Sift-Token": TOKEN, "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));
@@ -299,7 +299,7 @@ async function renderHeadBanner() {
     el("strong", { text: "This report is out of date." }),
     " ",
     el("span", { text: `The PR is at ${head.remote_head_sha.slice(0, 7)}, but the report was built from ${head.head_sha.slice(0, 7)}. Run ` }),
-    el("code", { class: "inline", text: "/review-pr" }),
+    el("code", { class: "inline", text: "/pr-sift" }),
     el("span", { text: " again to see the new commits; your review marks and drafts are kept." }),
   );
 }
@@ -310,7 +310,7 @@ function renderWalkthrough() {
   const panel = document.getElementById("panel-walkthrough");
   const { summary } = data;
   const cards = [statsRow()];
-  const stale = summary?.stale && el("p", { class: "notice", text: "This was written for an earlier head. Run /review-pr again to refresh it." });
+  const stale = summary?.stale && el("p", { class: "notice", text: "This was written for an earlier head. Run /pr-sift again to refresh it." });
 
   cards.push(prThreads());
   if (summary?.walkthrough?.length) {
@@ -320,7 +320,7 @@ function renderWalkthrough() {
   } else {
     cards.push(
       el("div", { class: "card empty" },
-        "This PR hasn't been ranked yet. Run ", el("code", { text: "/review-pr" }), " in Claude Code to rank and summarize it.",
+        "This PR hasn't been ranked yet. Run ", el("code", { text: "/pr-sift" }), " in Claude Code to rank and summarize it.",
       ),
     );
   }
@@ -1834,7 +1834,7 @@ function previewView(preview) {
   return el("div", { class: "preview" },
     preview.head_moved && el("p", { class: "notice danger" },
       `The PR has new commits (${preview.remote_head_sha.slice(0, 7)}) since it was analyzed at ${preview.head_sha.slice(0, 7)}. `,
-      "Run /review-pr again and check your drafts before posting."),
+      "Run /pr-sift again and check your drafts before posting."),
     group("inline", "Inline comments"),
     group("body", "In the review body"),
     group("skipped", "Not posted"),

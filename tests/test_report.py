@@ -5,11 +5,11 @@ import urllib.request
 
 import pytest
 
-from reviewer.noise import classify
-from reviewer.report import diff_rows, page_data
-from reviewer.server import ReportServer
-from reviewer.store import Store
-from reviewer.units import diff_files
+from pr_sift.noise import classify
+from pr_sift.report import diff_rows, page_data
+from pr_sift.server import ReportServer
+from pr_sift.store import Store
+from pr_sift.units import diff_files
 
 BASE = {"pkg/mod.py": "def f():\n    return 1\n\n\ndef g():\n    return 1\n\n\ndef _h(a):\n    return a\n"}
 FIRST = {"pkg/mod.py": "def f():\n    return 2\n\n\ndef g():\n    return 2\n\n\ndef _h(b):\n    return b\n"}
@@ -81,7 +81,7 @@ def server():
 def request(server, method, path, body=None, token=True, host=None):
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["X-Reviewer-Token"] = server.token
+        headers["X-PR-Sift-Token"] = server.token
     if host:
         headers["Host"] = host
     data = json.dumps(body).encode() if body is not None else None
@@ -134,7 +134,7 @@ def test_review_of_stale_or_unknown_unit_is_rejected(server):
 
 
 def test_doc_line():
-    from reviewer.report import doc_line
+    from pr_sift.report import doc_line
 
     assert doc_line('    def get(self):\n        """Fetch it.\n\n        More."""\n        return 1') == "Fetch it."
     assert doc_line('"""Module doc."""\nX = 1') == "Module doc."
@@ -146,9 +146,9 @@ def test_units_carry_changed_lines_and_docstrings():
     store = Store()
     old = {"pkg/mod.py": 'def fetch(url):\n    """Fetch a URL."""\n    return url\n'}
     new = {"pkg/mod.py": 'def fetch(url, retries=3):\n    """Fetch a URL."""\n    return url\n'}
-    from reviewer.analysis import Analysis, report_data
-    from reviewer.graph import GraphDiff
-    from reviewer.interfaces import annotate, diff_interfaces
+    from pr_sift.analysis import Analysis, report_data
+    from pr_sift.graph import GraphDiff
+    from pr_sift.interfaces import annotate, diff_interfaces
 
     units = classify(diff_files(old, new))
     interfaces = diff_interfaces(old, new)
@@ -190,8 +190,8 @@ def test_old_databases_get_the_description_column(tmp_path):
 
 
 def test_folds_apply_only_to_wholly_added_or_unchanged_lines():
-    from reviewer.folds import Fold
-    from reviewer.report import shown_folds
+    from pr_sift.folds import Fold
+    from pr_sift.report import shown_folds
 
     diff = [["+", None, 1, "a"], ["+", None, 2, "b"], [" ", 3, 3, "c"], ["-", 4, None, "d"], [" ", 5, 4, "e"]]
     folds = [Fold(1, 2, None, "s", []), Fold(2, 3, None, "s", []), Fold(3, 4, None, "s", []), Fold(9, 9, None, "s", [])]
@@ -219,7 +219,7 @@ def test_units_carry_attention_and_highlights():
 
 
 def test_key_lines_never_hide_every_change():
-    from reviewer.report import key_lines
+    from pr_sift.report import key_lines
 
     unit_row = {"path": "m.py", "kind": "function", "old_body": "def f():\n    x = 1\n", "new_body": "def f():\n    x = 2\n"}
     diff = [[" ", 1, 1, "def f():"], ["-", 2, None, "    x = 1"], ["+", None, 2, "    x = 2"]]
@@ -275,7 +275,7 @@ def test_migrating_a_column_another_process_added_is_fine(tmp_path):
 def test_highlights_follow_their_unit_when_it_moves(tmp_path, monkeypatch):
     import json as _json
 
-    from reviewer import cli
+    from pr_sift import cli
 
     store = Store()
     pr_id = analyze(store, FIRST)

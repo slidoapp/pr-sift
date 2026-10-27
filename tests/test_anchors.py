@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from reviewer.anchors import AnchorError, block_fingerprint, make_anchor, resolve
-from reviewer.noise import classify
-from reviewer.store import Store
-from reviewer.units import diff_files
+from pr_sift.anchors import AnchorError, block_fingerprint, make_anchor, resolve
+from pr_sift.noise import classify
+from pr_sift.store import Store
+from pr_sift.units import diff_files
 
 BASE = {"pkg/mod.py": "def f():\n    return 1\n\n\ndef g():\n    x = 1\n    return x\n"}
 HEAD = {"pkg/mod.py": "def f():\n    return 2\n\n\ndef g():\n    x = 2\n    return x\n"}

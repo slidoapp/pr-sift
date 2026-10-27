@@ -1,4 +1,4 @@
-"""Command line interface: reviewer analyze | ingest | serve | status."""
+"""Command line interface: pr-sift analyze | ingest | serve | status."""
 
 import argparse
 import json
@@ -8,19 +8,19 @@ import webbrowser
 from collections import Counter
 from pathlib import Path
 
-from reviewer import github, repo
-from reviewer.analysis import analyze_revisions, ranking_input, report_data
-from reviewer.config import ConfigError, load_agent_config
-from reviewer.ranking import to_offsets, validate, validate_walkthrough
-from reviewer.server import ReportServer
-from reviewer.store import Store
+from pr_sift import github, repo
+from pr_sift.analysis import analyze_revisions, ranking_input, report_data
+from pr_sift.config import ConfigError, load_agent_config
+from pr_sift.ranking import to_offsets, validate, validate_walkthrough
+from pr_sift.server import ReportServer
+from pr_sift.store import Store
 
 
 def main(argv: list[str] | None = None) -> int:
     # Parsing the code under review must not print its own warnings,
     # such as invalid escape sequences.
     warnings.simplefilter("ignore", SyntaxWarning)
-    parser = argparse.ArgumentParser(prog="reviewer", description=__doc__)
+    parser = argparse.ArgumentParser(prog="pr-sift", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
     analyze = commands.add_parser("analyze", help="analyze a PR and write what the model should rank")
@@ -107,7 +107,7 @@ def cmd_ingest(args) -> int:
     store = Store()
     row = store.pr(repo_key(pr), pr.number)
     if row is None:
-        print(f"error: {pr} has not been analyzed; run reviewer analyze first", file=sys.stderr)
+        print(f"error: {pr} has not been analyzed; run pr-sift analyze first", file=sys.stderr)
         return 1
     all_units = store.units(row["id"])
     units = [u for u in all_units if u["noise"] is None]
@@ -184,7 +184,7 @@ def cmd_serve(args) -> int:
     store = Store()
     row = store.pr(repo_key(pr), pr.number)
     if row is None:
-        print(f"error: {pr} has not been analyzed; run reviewer analyze first", file=sys.stderr)
+        print(f"error: {pr} has not been analyzed; run pr-sift analyze first", file=sys.stderr)
         return 1
     try:
         config = load_agent_config()

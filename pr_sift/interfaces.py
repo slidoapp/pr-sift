@@ -14,7 +14,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from reviewer.units import DEFS, FUNCS, Symbol, Unit, extract_symbols, is_public, module_name
+from pr_sift.units import DEFS, FUNCS, Symbol, Unit, extract_symbols, is_public, module_name
 
 SIGNALS = {
     "signature": "public-signature",

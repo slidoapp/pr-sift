@@ -1,4 +1,4 @@
-from reviewer.diffs import numbered_diff
+from pr_sift.diffs import numbered_diff
 
 
 def test_numbered_diff_keeps_context_around_changes():

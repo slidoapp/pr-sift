@@ -1,4 +1,4 @@
-from reviewer.ranking import validate
+from pr_sift.ranking import validate
 
 
 def ranking(**overrides):
@@ -88,7 +88,7 @@ def test_sections():
 
 
 def test_walkthrough():
-    from reviewer.ranking import validate_walkthrough
+    from pr_sift.ranking import validate_walkthrough
 
     units = {
         "m.run": {"attention": "read", "lines": {10, 11, 12}},

@@ -1,4 +1,4 @@
-# ai-reviewer — Design
+# PR Sift — Design
 
 A personal tool for reviewing GitHub pull requests that shows only the
 changes that matter (architecture, interfaces, behavior), remembers what
@@ -32,9 +32,9 @@ back to GitHub from a local report.
 ## Overview
 
 ```
-/review-pr 123   (Claude Code skill)
+/pr-sift 123   (Claude Code skill)
    │
-   ├─► reviewer analyze 123      ── Python CLI, no LLM
+   ├─► pr-sift analyze 123      ── Python CLI, no LLM
    │      fetch PR via gh, split into symbol units, noise filter,
    │      import graph, interface extraction, fingerprints
    │      → analysis.json (only units that still need ranking)
@@ -42,9 +42,9 @@ back to GitHub from a local report.
    ├─► Claude ranks the unranked units → ranking.json
    │      tier + reason + one-line behavior summary, PR overview
    │
-   ├─► reviewer ingest 123 ranking.json   → SQLite
+   ├─► pr-sift ingest 123 ranking.json   → SQLite
    │
-   └─► reviewer serve 123        ── local server + static report
+   └─► pr-sift serve 123        ── local server + static report
           mark reviewed, draft comments, submit review → GitHub (via gh)
           ask a question → claude -p in a checkout of the PR head
 ```
@@ -178,7 +178,7 @@ reviewer. Pre-filtering decides how much of each change to show.
 | `skim` | Claude, with a reason: repetitive tests, fixtures, trivial helpers, code whose mistakes a first run or the tests would catch | one-line row, expandable |
 | `hide` / hidden | Claude (`hide`), with a reason: trivial constants, aliases, test input; or the noise rules | collapsed list with the reason |
 
-**Folds** (deterministic, `reviewer/folds.py`). Long collections whose
+**Folds** (deterministic, `pr_sift/folds.py`). Long collections whose
 lines are all added or all unchanged collapse into a table:
 
 - A list, tuple, set or dict with at least 3 elements spanning at least
@@ -199,7 +199,7 @@ sleep, a destructive call, a changed limit. They show as callouts on
 the card, are marked in the diff and in fold tables, and survive
 folding.
 
-**Key lines** (deterministic, `reviewer/skeleton.py`). A card shows
+**Key lines** (deterministic, `pr_sift/skeleton.py`). A card shows
 only its key lines by default; the rest collapse into bars that open on
 click, and a switch shows the full diff:
 
@@ -246,8 +246,8 @@ Done by Claude inside the skill, not by the CLI.
 architecture and interface diffs, and the non-noise units with **no
 cached ranking**. Each unit includes its diff and signals.
 
-**Output** (`ranking.json`), validated by `reviewer ingest`
-(`reviewer/ranking.py`), which also rejects rankings that leave units
+**Output** (`ranking.json`), validated by `pr-sift ingest`
+(`pr_sift/ranking.py`), which also rejects rankings that leave units
 unranked:
 
 ```json
@@ -274,7 +274,7 @@ unranked:
 
 `attention` is `read` (the default), `skim` or `hide`. For `skim` and
 `hide` units, `reason` says why. Highlight lines are file lines of the unit's diff;
-`ingest` rejects any other. `reviewer analyze --rerank` sends every
+`ingest` rejects any other. `pr-sift analyze --rerank` sends every
 unit to Claude again, for example after the ranking format changes.
 
 `description` is written only for units with interface signals whose
@@ -315,8 +315,8 @@ Each unit can also be flagged (⚑) to come back to.
 
 ## Storage
 
-SQLite (stdlib `sqlite3`) at `~/.local/share/reviewer/reviewer.db`
-(override with `REVIEWER_DATA_DIR`). Chosen over LevelDB because it
+SQLite (stdlib `sqlite3`) at `~/.local/share/pr-sift/pr-sift.db`
+(override with `PR_SIFT_DATA_DIR`). Chosen over LevelDB because it
 ships with Python, needs no native library, and the data is relational
 and worth querying.
 
@@ -356,17 +356,17 @@ loads, not stored, so it recovers if the symbol comes back.
 `units` is replaced on each analysis. `rankings`, `reviews`,
 `comments` and `questions` persist.
 
-Repos are fetched into cached bare clones under `~/.cache/reviewer/`
-(override with `REVIEWER_CACHE_DIR`; `git fetch origin
+Repos are fetched into cached bare clones under `~/.cache/pr-sift/`
+(override with `PR_SIFT_CACHE_DIR`; `git fetch origin
 pull/<n>/head`), so your working checkout is never touched. The PR is
 diffed from the merge base of its base and head, as GitHub does.
 
 ## Report UI
 
-Plain HTML, CSS and JS in `reviewer/web/`, with Mermaid and
+Plain HTML, CSS and JS in `pr_sift/web/`, with Mermaid and
 highlight.js vendored so it works offline. Diffs are rendered by the
 page itself rather than diff2html, so lines can be made commentable.
-Served by `reviewer serve` on `127.0.0.1` with a random port; the
+Served by `pr-sift serve` on `127.0.0.1` with a random port; the
 command opens the browser. Light and dark themes follow the system.
 
 ```
@@ -427,7 +427,7 @@ command opens the browser. Light and dark themes follow the system.
 
 ### Server API
 
-`reviewer/server.py`, built on stdlib `http.server`. Binds to
+`pr_sift/server.py`, built on stdlib `http.server`. Binds to
 `127.0.0.1` only.
 
 | Method | Path | Purpose |
@@ -516,7 +516,7 @@ place: questions and answers are private and are never posted.
 - A **Questions** panel next to Drafts lists all threads, with stale
   and orphaned ones marked, and jumps to them.
 
-**The agent run** (`reviewer/agent.py`):
+**The agent run** (`pr_sift/agent.py`):
 
 - The server runs Claude Code headless, with your own login and default
   model (no `--model`), so the tool never handles an API key:
@@ -539,7 +539,7 @@ place: questions and answers are private and are never posted.
   agent remembers what it already read. Threads don't see each other.
 - **Working directory:** a detached worktree of the PR head, made from
   the cached bare clone (`git worktree add --detach`) and kept per head
-  SHA under `~/.cache/reviewer/worktrees/`. Older worktrees of the same
+  SHA under `~/.cache/pr-sift/worktrees/`. Older worktrees of the same
   PR are removed when a new one is made. A follow-up whose session or
   worktree is gone starts a new session that is told the thread so
   far. The agent can open callers,
@@ -575,7 +575,7 @@ place: questions and answers are private and are never posted.
 - Where WebSearch isn't available (some Bedrock or Vertex setups), the
   agent answers from the code alone and the thread says so.
 
-**Configuration** lives in `~/.config/reviewer/config.toml`:
+**Configuration** lives in `~/.config/pr-sift/config.toml`:
 
 ```toml
 [agent]
@@ -588,7 +588,7 @@ timeout_seconds = 300
 
 ## Posting to GitHub
 
-`reviewer/posting.py`. In the Drafts panel you write a summary, pick
+`pr_sift/posting.py`. In the Drafts panel you write a summary, pick
 `COMMENT`, `APPROVE` or `REQUEST_CHANGES`, and preview. Nothing is sent
 until you confirm the preview.
 
@@ -617,7 +617,7 @@ until you confirm the preview.
    blocks, quotes, headings, tables and hard breaks stay as they are.
 4. **Post** (`POST /api/review`): the page sends the event, the summary
    and the draft ids and head SHA of the preview. The server stops if
-   the PR head moved since the analysis (run `/review-pr` again and
+   the PR head moved since the analysis (run `/pr-sift` again and
    check your drafts) or if the drafts changed since the preview.
    Otherwise it calls `gh api --method POST
    repos/{owner}/{repo}/pulls/{n}/reviews --input -` with `commit_id`
@@ -635,10 +635,10 @@ pending review, are shown as they come, and the drafts stay drafts.
 ## CLI
 
 ```
-reviewer analyze <pr> [--repo owner/name] [--out analysis.json]
-reviewer ingest  <pr> <ranking.json>
-reviewer serve   <pr> [--no-open] [--port N]
-reviewer status  [<pr>]          # PRs known locally, review progress
+pr-sift analyze <pr> [--repo owner/name] [--out analysis.json]
+pr-sift ingest  <pr> <ranking.json>
+pr-sift serve   <pr> [--no-open] [--port N]
+pr-sift status  [<pr>]          # PRs known locally, review progress
 ```
 
 `<pr>` is a number (repo taken from the current directory's remote),
@@ -647,15 +647,15 @@ host configuration.
 
 ## Skill
 
-`skills/review-pr/SKILL.md`:
+`skills/pr-sift/SKILL.md`:
 
 1. Resolve the PR from the argument or the current branch.
-2. Run `reviewer analyze <pr> --out <scratch>/analysis.json`.
+2. Run `pr-sift analyze <pr> --out <scratch>/analysis.json`.
 3. Read the analysis. Rank every unit in it and write the overview and
    component summaries, following the tier definitions above.
-4. Write `ranking.json` and run `reviewer ingest`. On a validation
+4. Write `ranking.json` and run `pr-sift ingest`. On a validation
    error, fix and retry.
-5. Run `reviewer serve <pr>` in the background and tell the user the
+5. Run `pr-sift serve <pr>` in the background and tell the user the
    URL, plus a short text summary: tiers and counts, new since last
    review.
 
@@ -664,7 +664,7 @@ For very large PRs, the skill ranks units in batches by package.
 ## Project layout
 
 ```
-reviewer/
+pr_sift/
   cli.py            # analyze | ingest | serve | status
   github.py         # gh wrappers: PR metadata, cloning, post review
   repo.py           # cached bare clones, worktrees, reading files at a SHA
@@ -677,9 +677,9 @@ reviewer/
   store.py          # SQLite schema and queries
   server.py         # stdlib HTTP server and JSON API
   agent.py          # runs the agent for questions, parses its stream
-  config.py         # ~/.config/reviewer/config.toml
+  config.py         # ~/.config/pr-sift/config.toml
   web/              # index.html, app.js, styles.css, vendor/
-skills/review-pr/SKILL.md
+skills/pr-sift/SKILL.md
 tests/
 docs/design.md
 ```

@@ -1,4 +1,4 @@
-"""User configuration from ~/.config/reviewer/config.toml.
+"""User configuration from ~/.config/pr-sift/config.toml.
 
 ```toml
 [agent]
@@ -31,7 +31,7 @@ class AgentConfig:
 
 
 def config_path() -> Path:
-    return Path(os.environ.get("REVIEWER_CONFIG_DIR", "~/.config/reviewer")).expanduser() / "config.toml"
+    return Path(os.environ.get("PR_SIFT_CONFIG_DIR", "~/.config/pr-sift")).expanduser() / "config.toml"
 
 
 def load_agent_config(path: Path | None = None) -> AgentConfig:

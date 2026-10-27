@@ -2,8 +2,8 @@ from textwrap import dedent
 
 import pytest
 
-from reviewer.noise import classify
-from reviewer.units import diff_files
+from pr_sift.noise import classify
+from pr_sift.units import diff_files
 
 
 def noise(old, new, path="pkg/mod.py"):

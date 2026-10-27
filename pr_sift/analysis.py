@@ -6,13 +6,13 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from reviewer.diffs import numbered_diff
-from reviewer.folds import find_folds
-from reviewer.graph import GraphDiff, build_graph, diff_graphs, graph_signals, to_mermaid
-from reviewer.interfaces import InterfaceChange, annotate, diff_interfaces
-from reviewer.noise import classify, hide_plain_imports
-from reviewer.repo import changed_paths, list_files, read_files
-from reviewer.units import Unit, diff_files, module_name
+from pr_sift.diffs import numbered_diff
+from pr_sift.folds import find_folds
+from pr_sift.graph import GraphDiff, build_graph, diff_graphs, graph_signals, to_mermaid
+from pr_sift.interfaces import InterfaceChange, annotate, diff_interfaces
+from pr_sift.noise import classify, hide_plain_imports
+from pr_sift.repo import changed_paths, list_files, read_files
+from pr_sift.units import Unit, diff_files, module_name
 
 # Longest diff sent to the model per unit; the report always shows all of it.
 MAX_DIFF_LINES = 400

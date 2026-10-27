@@ -1,5 +1,5 @@
 [project]
-name = "ai-reviewer"
+name = "pr-sift"
 version = "0.1.0"
 description = "Review GitHub pull requests by what matters: architecture, interfaces, behavior."
 readme = "README.md"
@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.scripts]
-reviewer = "reviewer.cli:main"
+pr-sift = "pr_sift.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -17,7 +17,7 @@ requires = ["uv_build>=0.9,<0.10"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "reviewer"
+module-name = "pr_sift"
 module-root = ""
 
 [tool.pytest.ini_options]

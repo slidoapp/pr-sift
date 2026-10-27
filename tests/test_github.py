@@ -1,6 +1,6 @@
 import pytest
 
-from reviewer.github import GitHubError, PrRef, parse_pr, parse_repo
+from pr_sift.github import GitHubError, PrRef, parse_pr, parse_repo
 
 
 def current():

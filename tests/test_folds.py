@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-from reviewer.folds import find_folds
+from pr_sift.folds import find_folds
 
 
 def folds(source, path="m.py", first_line=1):

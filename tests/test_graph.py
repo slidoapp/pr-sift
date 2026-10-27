@@ -1,4 +1,4 @@
-from reviewer.graph import build_graph, diff_graphs, graph_signals, to_mermaid
+from pr_sift.graph import build_graph, diff_graphs, graph_signals, to_mermaid
 
 BASE = {
     "src/app/__init__.py": "",

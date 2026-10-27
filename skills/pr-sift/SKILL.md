@@ -1,11 +1,11 @@
 ---
-name: review-pr
+name: pr-sift
 description: Review a GitHub pull request by what matters - architecture, interfaces and behavior - with renames, comments, docstrings and formatting filtered out, and review state that survives force-pushes. Use when the user asks to review a PR, look at a PR, or see what changed in a PR since they last reviewed it. Takes a PR number, owner/repo#n or URL; defaults to the current branch's PR. Python repositories only.
 ---
 
 # Review a pull request
 
-The `reviewer` CLI does the deterministic work: it splits the PR into
+The `pr-sift` CLI does the deterministic work: it splits the PR into
 symbol-level units (functions, methods, class bodies, module code),
 hides noise, detects interface and architecture changes, and remembers
 what was already ranked. Your job is the judgement: rank each unit
@@ -13,16 +13,16 @@ that is left and summarize the PR.
 
 ## Prerequisites
 
-`reviewer`, `gh` and `git` must be on PATH, and `gh` must be logged in.
-If `reviewer` is missing, tell the user to install it from the
-ai-reviewer checkout with `uv tool install --editable <path>` and stop.
+`pr-sift`, `gh` and `git` must be on PATH, and `gh` must be logged in.
+If `pr-sift` is missing, tell the user to install it from the
+pr-sift checkout with `uv tool install --editable <path>` and stop.
 
 ## Steps
 
 1. **Analyze.** Make a scratch directory and run:
 
    ```bash
-   reviewer analyze <pr> --out <scratch>/analysis.json
+   pr-sift analyze <pr> --out <scratch>/analysis.json
    ```
 
    Omit `<pr>` to use the current branch's PR. Pass `--repo
@@ -99,13 +99,13 @@ ai-reviewer checkout with `uv tool install --editable <path>` and stop.
 4. **Store it.**
 
    ```bash
-   reviewer ingest <pr> <scratch>/ranking.json --model <your model id>
+   pr-sift ingest <pr> <scratch>/ranking.json --model <your model id>
    ```
 
    Use the same `<pr>` and `--repo` as in step 1. If it reports
    validation errors, fix the file and run it again.
 
-5. **Open the report.** Run `reviewer serve <pr>` (same `<pr>` and
+5. **Open the report.** Run `pr-sift serve <pr>` (same `<pr>` and
    `--repo`) in the background. It prints the report's URL and opens
    it in the browser. There the user marks units reviewed and flags
    them, drafts comments and posts them as a GitHub review, and asks
@@ -169,7 +169,7 @@ Structure, top-down, and only as deep as needed:
 How deep to go follows attention: every `read` unit (and any unit with
 highlights) gets a `code` block; every `skim` unit is in a `units`
 block or, if the story needs it, a `code` block; `hide` and noise units
-are left out or listed at most. `reviewer ingest` rejects a walkthrough
+are left out or listed at most. `pr-sift ingest` rejects a walkthrough
 that leaves out a `read` or `skim` unit. Keep the prose short: a step is
 1–3 sentences. Say what the code does and why it matters; don't narrate
 the code line by line, and don't repeat the summaries.

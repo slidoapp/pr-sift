@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-from reviewer.units import diff_files, extract_symbols, is_public, module_name
+from pr_sift.units import diff_files, extract_symbols, is_public, module_name
 
 SOURCE = '''\
 import os

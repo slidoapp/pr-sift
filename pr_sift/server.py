@@ -18,14 +18,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from reviewer import github, repo
-from reviewer.agent import Agents
-from reviewer.anchors import AnchorError, make_anchor
-from reviewer.config import AgentConfig
-from reviewer.posting import GitHubPoster, PlanError, match_posted, parse_diff, plan_review
-from reviewer.report import FLAGGED, REVIEWED, page_data
-from reviewer.store import Store
-from reviewer.threads import comment_view, first_prompt, question_view, stored_walkthrough, thread_data
+from pr_sift import github, repo
+from pr_sift.agent import Agents
+from pr_sift.anchors import AnchorError, make_anchor
+from pr_sift.config import AgentConfig
+from pr_sift.posting import GitHubPoster, PlanError, match_posted, parse_diff, plan_review
+from pr_sift.report import FLAGGED, REVIEWED, page_data
+from pr_sift.store import Store
+from pr_sift.threads import comment_view, first_prompt, question_view, stored_walkthrough, thread_data
 
 WEB = Path(__file__).parent / "web"
 CSP = (
@@ -281,7 +281,7 @@ class Handler(BaseHTTPRequestHandler):
         if preview["head_moved"]:
             return self._json(HTTPStatus.CONFLICT, {
                 "error": f"the PR has new commits ({remote[:7]}) since it was analyzed; "
-                         "run /review-pr again, check your drafts, then post",
+                         "run /pr-sift again, check your drafts, then post",
             })
         if body.get("drafts") != preview["drafts"] or body.get("head_sha") != pr["head_sha"]:
             return self._json(HTTPStatus.CONFLICT, {"error": "the drafts changed since the preview; preview again"})
@@ -417,7 +417,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.OK, {"head_sha": head, "remote_head_sha": remote, "head_moved": remote != head})
 
     def _authorized(self, token=None):
-        given = token if token is not None else self.headers.get("X-Reviewer-Token", "")
+        given = token if token is not None else self.headers.get("X-PR-Sift-Token", "")
         if secrets.compare_digest(given.encode(), self.server.token.encode()):
             return True
         self._json(HTTPStatus.FORBIDDEN, {"error": "missing or wrong token"})

@@ -4,13 +4,13 @@ import urllib.request
 
 import pytest
 
-from reviewer.github import GitHubError
-from reviewer.noise import classify
-from reviewer.posting import PlanError, parse_diff, plan_review, unwrap
-from reviewer.repo import git
-from reviewer.server import ReportServer
-from reviewer.store import Store
-from reviewer.units import diff_files
+from pr_sift.github import GitHubError
+from pr_sift.noise import classify
+from pr_sift.posting import PlanError, parse_diff, plan_review, unwrap
+from pr_sift.repo import git
+from pr_sift.server import ReportServer
+from pr_sift.store import Store
+from pr_sift.units import diff_files
 
 OLD = "def f():\n" + "".join(f"    a{i} = {i}\n" for i in range(20)) + "    return a0\n"
 NEW = OLD.replace("    a1 = 1\n", "    a1 = 100\n").replace("    a18 = 18\n", "    a18 = 180\n")
@@ -175,7 +175,7 @@ def server(git_repo):
 
 
 def call(server, method, path, body=None):
-    headers = {"Content-Type": "application/json", "X-Reviewer-Token": server.token}
+    headers = {"Content-Type": "application/json", "X-PR-Sift-Token": server.token}
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(server.url.rstrip("/") + path, data=data, method=method, headers=headers)
     try:

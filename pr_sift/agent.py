@@ -15,8 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from reviewer.config import AgentConfig
-from reviewer.store import Store
+from pr_sift.config import AgentConfig
+from pr_sift.store import Store
 
 FILE_TOOLS = ("Read", "Grep", "Glob")
 INSTRUCTIONS = """\

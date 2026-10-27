@@ -11,8 +11,8 @@ paragraph.
 import re
 from dataclasses import dataclass, field
 
-from reviewer import github, repo
-from reviewer.units import module_name
+from pr_sift import github, repo
+from pr_sift.units import module_name
 
 EVENTS = ("COMMENT", "APPROVE", "REQUEST_CHANGES")
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")

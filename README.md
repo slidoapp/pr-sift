@@ -1,4 +1,4 @@
-# ai-reviewer
+# PR Sift
 
 Review GitHub pull requests by what matters: architecture, interfaces
 and behavior. Renames, comments, docstrings and formatting are filtered
@@ -23,9 +23,9 @@ agent's skills folder:
 
 ```bash
 mkdir -p ~/.agents/skills ~/.claude/skills ~/.codex/skills
-ln -s "$PWD/skills/review-pr" ~/.agents/skills/review-pr
-ln -s ../../.agents/skills/review-pr ~/.claude/skills/review-pr
-ln -s ../../.agents/skills/review-pr ~/.codex/skills/review-pr
+ln -s "$PWD/skills/pr-sift" ~/.agents/skills/pr-sift
+ln -s ../../.agents/skills/pr-sift ~/.claude/skills/pr-sift
+ln -s ../../.agents/skills/pr-sift ~/.codex/skills/pr-sift
 ```
 
 Both installs point at this checkout, so changes here take effect
@@ -36,15 +36,15 @@ without reinstalling.
 In Claude Code, inside any checkout of the repository:
 
 ```
-/review-pr 123
+/pr-sift 123
 ```
 
 Or run the analysis yourself:
 
 ```bash
-reviewer analyze 123 --out analysis.json   # or owner/repo#123, or a PR URL
-reviewer serve 123                         # open the report in the browser
-reviewer status
+pr-sift analyze 123 --out analysis.json   # or owner/repo#123, or a PR URL
+pr-sift serve 123                         # open the report in the browser
+pr-sift status
 ```
 
 In the report, hover a line and click **+**, or select lines or
@@ -55,12 +55,12 @@ login and default model. Questions are private. Drafts stay local
 until you submit them from the Drafts panel: preview where each one
 goes, then post them as one GitHub review through `gh`.
 
-Data lives in `~/.local/share/reviewer` and repository clones in
-`~/.cache/reviewer`; set `REVIEWER_DATA_DIR` and `REVIEWER_CACHE_DIR`
+Data lives in `~/.local/share/pr-sift` and repository clones in
+`~/.cache/pr-sift`; set `PR_SIFT_DATA_DIR` and `PR_SIFT_CACHE_DIR`
 to move them.
 
-Optional settings go in `~/.config/reviewer/config.toml`
-(`REVIEWER_CONFIG_DIR` moves it):
+Optional settings go in `~/.config/pr-sift/config.toml`
+(`PR_SIFT_CONFIG_DIR` moves it):
 
 ```toml
 [agent]

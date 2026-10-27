@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-from reviewer.skeleton import skeleton_lines
+from pr_sift.skeleton import skeleton_lines
 
 RUNNER = '''\
 def run(service_url, cases, timeout=30):

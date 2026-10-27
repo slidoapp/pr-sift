@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from reviewer.units import Unit
+from pr_sift.units import Unit
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS prs (
@@ -134,7 +134,7 @@ ANCHOR_FIELDS = ("anchor_kind", "qualname", "fingerprint", "side", "start_offset
 
 
 def data_dir() -> Path:
-    return Path(os.environ.get("REVIEWER_DATA_DIR", "~/.local/share/reviewer")).expanduser()
+    return Path(os.environ.get("PR_SIFT_DATA_DIR", "~/.local/share/pr-sift")).expanduser()
 
 
 def now() -> str:
@@ -144,7 +144,7 @@ def now() -> str:
 class Store:
     def __init__(self, path: Path | None = None):
         if path is None:
-            path = data_dir() / "reviewer.db"
+            path = data_dir() / "pr-sift.db"
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         # The report server's request threads and agent runs share one

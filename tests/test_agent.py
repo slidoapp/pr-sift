@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from reviewer.agent import Agents, StreamParser
-from reviewer.config import AgentConfig, ConfigError, load_agent_config
-from reviewer.noise import classify
-from reviewer.server import ReportServer
-from reviewer.store import Store
-from reviewer.units import diff_files
+from pr_sift.agent import Agents, StreamParser
+from pr_sift.config import AgentConfig, ConfigError, load_agent_config
+from pr_sift.noise import classify
+from pr_sift.server import ReportServer
+from pr_sift.store import Store
+from pr_sift.units import diff_files
 
 FAKE = Path(__file__).parent / "fake_agent.py"
 BASE = {"pkg/mod.py": "def f():\n    return 1\n"}
@@ -203,7 +203,7 @@ def test_interrupted_runs_fail_when_a_server_starts(workdir):
 
 
 def test_config_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("REVIEWER_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("PR_SIFT_CONFIG_DIR", str(tmp_path))
     assert load_agent_config().command == ["claude"]
     (tmp_path / "config.toml").write_text(
         '[agent]\ncommand = "/opt/claude --x"\nweb_fetch_domains = ["pypi.org"]\nmax_parallel = 0\n'
@@ -232,7 +232,7 @@ def server(agent_log, workdir):
 def call(server, method, path, body=None, token=True):
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["X-Reviewer-Token"] = server.token
+        headers["X-PR-Sift-Token"] = server.token
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(server.url.rstrip("/") + path, data=data, method=method, headers=headers)
     try:

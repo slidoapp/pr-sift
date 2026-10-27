@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from reviewer.units import extract_symbols, module_name
+from pr_sift.units import extract_symbols, module_name
 
 MAX_NODES = 25
 MAX_CONTEXT = 12

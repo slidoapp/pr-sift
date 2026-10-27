@@ -1,4 +1,4 @@
-from reviewer.repo import changed_paths, list_files, merge_base, read_files
+from pr_sift.repo import changed_paths, list_files, merge_base, read_files
 
 
 def test_changed_paths_and_read_files(git_repo):
