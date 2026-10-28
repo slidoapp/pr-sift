@@ -21,11 +21,14 @@
 
   <div class="bar" id="bar">
     <div class="wrap bar-inner">
-      <nav class="tabs" role="tablist" aria-label="Report sections">
-        <button role="tab" data-tab="walkthrough" id="tab-walkthrough">Walkthrough</button>
-        <button role="tab" data-tab="architecture" id="tab-architecture">Architecture</button>
-        <button role="tab" data-tab="interfaces" id="tab-interfaces">Interfaces <span class="count" id="count-interfaces"></span></button>
-        <button role="tab" data-tab="changes" id="tab-changes">Changes <span class="count" id="count-changes"></span></button>
+      <nav class="tabs steps" aria-label="Review steps">
+        <div role="tablist" aria-label="Report sections">
+          <button role="tab" data-tab="walkthrough" id="tab-walkthrough" title="Read what the PR does and why (1)"><span class="step">1</span>Walkthrough</button>
+          <span class="step-sep" aria-hidden="true">›</span>
+          <button role="tab" data-tab="changes" id="tab-changes" title="Read and mark each unit reviewed (2)"><span class="step">2</span>Changes <span class="count" id="count-changes"></span></button>
+        </div>
+        <span class="step-sep" aria-hidden="true">›</span>
+        <button id="step-post" aria-pressed="false" title="Submit your comments as a GitHub review (3)"><span class="step">3</span>Post review <span class="count" id="count-drafts"></span></button>
       </nav>
       <div class="inbox" id="inbox"></div>
       <div class="progress" id="progress">
@@ -39,8 +42,6 @@
     <div class="banner stale" id="head-banner" hidden></div>
     <div class="banner" id="banner" hidden></div>
     <section id="panel-walkthrough" role="tabpanel" aria-labelledby="tab-walkthrough" hidden></section>
-    <section id="panel-architecture" role="tabpanel" aria-labelledby="tab-architecture" hidden></section>
-    <section id="panel-interfaces" role="tabpanel" aria-labelledby="tab-interfaces" hidden></section>
     <section id="panel-changes" role="tabpanel" aria-labelledby="tab-changes" hidden></section>
   </main>
 
@@ -61,7 +62,8 @@
         <dt><kbd>a</kbd></dt><dd>Ask Claude about the selection, the focused unit, or the PR</dd>
         <dt><kbd>c</kbd></dt><dd>Comment on the selection, the focused unit, or the PR</dd>
         <dt><kbd>⌘</kbd> <kbd>↵</kbd></dt><dd>Send a question or save a comment</dd>
-        <dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Switch tab</dd>
+        <dt><kbd>1</kbd> <kbd>2</kbd></dt><dd>Walkthrough / Changes</dd>
+        <dt><kbd>3</kbd></dt><dd>Post review: your drafts and the review to submit</dd>
         <dt><kbd>?</kbd></dt><dd>Show this help</dd>
         <dt><kbd>Esc</kbd></dt><dd>Close</dd>
       </dl>

@@ -71,6 +71,33 @@ def first_prompt(store: Store, pr_id: int, anchor: dict, question: str, history:
     """The first message of a thread's session: the PR, what the question
     is anchored on, and the question. history holds earlier turns of the
     thread when its session can't be resumed."""
+    parts = _context(store, pr_id, anchor)
+    for turn in history:
+        who = "I asked" if turn["role"] == "you" else "You answered"
+        parts.append(f"{who} earlier:\n{_quote(turn['body'])}")
+    parts.append(f"My question: {question}")
+    return "\n\n".join(p for p in parts if p)
+
+
+def draft_prompt(store: Store, pr_id: int, anchor: dict, messages: list[dict]) -> str:
+    """What the agent writes a review comment from: the question's context,
+    the thread, and where the comment goes."""
+    parts = _context(store, pr_id, anchor)
+    for message in messages:
+        who = "I asked" if message["role"] == "you" else "You answered"
+        parts.append(f"{who}:\n{_quote(message['body'])}")
+    if anchor["kind"] in ("line", "range") and anchor.get("state") != "orphaned":
+        where = "on the lines I asked about"
+    elif anchor["kind"] == "unit" and anchor.get("state") != "orphaned":
+        where = f"on `{anchor['qualname']}`"
+    else:
+        where = "as a general comment on the PR, so name the code it is about"
+    parts.append(f"Write the review comment I'll post {where}.")
+    return "\n\n".join(p for p in parts if p)
+
+
+def _context(store: Store, pr_id: int, anchor: dict) -> list[str]:
+    """The PR and what a question is anchored on."""
     pr = store.pr_by_id(pr_id)
     summary = store.summary(pr_id)
     units = store.units(pr_id)
@@ -101,12 +128,7 @@ def first_prompt(store: Store, pr_id: int, anchor: dict, question: str, history:
             parts.append(_lines_context(unit, anchor))
         if anchor.get("quote"):
             parts.append(f"I selected:\n{_quote(anchor['quote'])}")
-
-    for turn in history:
-        who = "I asked" if turn["role"] == "you" else "You answered"
-        parts.append(f"{who} earlier:\n{_quote(turn['body'])}")
-    parts.append(f"My question: {question}")
-    return "\n\n".join(p for p in parts if p)
+    return parts
 
 
 def _unit_list(store, units) -> str:

@@ -19,13 +19,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from pr_sift import github, repo
-from pr_sift.agent import Agents
+from pr_sift.agent import AgentError, Agents
 from pr_sift.anchors import AnchorError, make_anchor
 from pr_sift.config import AgentConfig
 from pr_sift.posting import GitHubPoster, PlanError, match_posted, parse_diff, plan_review
 from pr_sift.report import FLAGGED, REVIEWED, page_data
 from pr_sift.store import Store
-from pr_sift.threads import comment_view, first_prompt, question_view, stored_walkthrough, thread_data
+from pr_sift.threads import comment_view, draft_prompt, first_prompt, question_view, stored_walkthrough, thread_data
 
 WEB = Path(__file__).parent / "web"
 CSP = (
@@ -34,7 +34,7 @@ CSP = (
 )
 MAX_TEXT = 20_000
 COMMENT = re.compile(r"^/api/comments/(\d+)$")
-QUESTION = re.compile(r"^/api/questions/(\d+)(/messages|/cancel|/events)?$")
+QUESTION = re.compile(r"^/api/questions/(\d+)(/messages|/cancel|/events|/draft)?$")
 
 
 class ReportServer(ThreadingHTTPServer):
@@ -53,7 +53,10 @@ class ReportServer(ThreadingHTTPServer):
         self.store = store
         self.pr_id = pr_id
         self.token = secrets.token_urlsafe(32)
-        self.static = {p.relative_to(WEB).as_posix(): p for p in WEB.rglob("*") if p.is_file()}
+        # The page is read once, so it always matches the API of this
+        # server, even when pr-sift is upgraded while it runs.
+        self.index = (WEB / "index.html").read_text().replace("__TOKEN__", self.token).encode()
+        self.static = {p.relative_to(WEB).as_posix(): p.read_bytes() for p in WEB.rglob("*") if p.is_file()}
         self.agent_config = agent_config or AgentConfig()
         self.workdir = workdir or self._worktree
         self.agents = Agents(store, self.agent_config, self.question_view, pr_id)
@@ -106,11 +109,10 @@ class Handler(BaseHTTPRequestHandler):
         if path is None:
             return
         if path == "/":
-            page = (WEB / "index.html").read_text().replace("__TOKEN__", self.server.token)
-            self._send(HTTPStatus.OK, page.encode(), "text/html; charset=utf-8")
-        elif path.startswith("/static/") and (file := self.server.static.get(path.removeprefix("/static/"))):
-            kind = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
-            self._send(HTTPStatus.OK, file.read_bytes(), kind)
+            self._send(HTTPStatus.OK, self.server.index, "text/html; charset=utf-8")
+        elif path.startswith("/static/") and (name := path.removeprefix("/static/")) in self.server.static:
+            kind = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            self._send(HTTPStatus.OK, self.server.static[name], kind)
         elif path == "/api/pr":
             if self._authorized():
                 with self.server.store.lock:
@@ -153,6 +155,8 @@ class Handler(BaseHTTPRequestHandler):
             # These wait on GitHub, so they take the lock only while they
             # use the store.
             return self._review(body, submit=path == "/api/review")
+        if method == "POST" and (match := QUESTION.match(path)) and match[2] == "/draft":
+            return self._draft(int(match[1]))
         with self.server.store.lock:
             self._route(method, path, body)
 
@@ -354,6 +358,31 @@ class Handler(BaseHTTPRequestHandler):
             prompt = first_prompt(store, server.pr_id, previous["anchor"], text, previous["messages"])
             server.agents.ask(question_id, prompt, workdir)
         self._json(HTTPStatus.OK, server.question_view(question_id))
+
+    def _draft(self, question_id):
+        """A review comment the agent writes from the thread. It waits on
+        the agent, so it takes the lock only while it uses the store."""
+        store, server = self.server.store, self.server
+        with store.lock:
+            row = self._own_question(question_id)
+            if row is None:
+                return self._json(HTTPStatus.NOT_FOUND, {"error": f"no question {question_id}"})
+            if server.agents.running(question_id):
+                return self._json(HTTPStatus.CONFLICT, {"error": "the agent is still answering"})
+            view = server.question_view(question_id)
+            if not any(m["role"] == "agent" for m in view["messages"]):
+                return self._json(HTTPStatus.CONFLICT, {"error": "the question has no answer yet"})
+            prompt = draft_prompt(store, server.pr_id, view["anchor"], view["messages"])
+            workdir = Path(row["workdir"]) if row["workdir"] else None
+        try:
+            if not workdir or not workdir.exists():
+                workdir = server.workdir()
+            body = server.agents.draft(prompt, workdir)
+        except repo.GitError as e:
+            return self._json(HTTPStatus.CONFLICT, {"error": f"can't check out the PR for the agent: {e}"})
+        except AgentError as e:
+            return self._json(HTTPStatus.BAD_GATEWAY, {"error": str(e)})
+        self._json(HTTPStatus.OK, {"body": body[:MAX_TEXT]})
 
     def _cancel(self, question_id):
         if self._own_question(question_id) is None:

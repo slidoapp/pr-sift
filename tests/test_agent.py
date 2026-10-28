@@ -319,6 +319,39 @@ def test_a_follow_up_without_its_session_retells_the_thread(server, agent_log, w
     assert prompt.endswith("My question: More?")
 
 
+def test_a_comment_is_drafted_from_the_thread_by_a_run_without_tools(server, agent_log, workdir):
+    _, question = call(server, "POST", "/api/questions", {"anchor": {"kind": "pr"}, "text": "What changed?"})
+    events(server, question["id"])
+    status, draft = call(server, "POST", f"/api/questions/{question['id']}/draft")
+    assert (status, draft) == (200, {"body": "It returns `2` now (`pkg/mod.py:2`)."})
+
+    run = runs(agent_log)[1]
+    assert run["args"][run["args"].index("--tools") + 1] == ""
+    assert "--resume" not in run["args"]
+    assert "I asked:\n> What changed?" in run["prompt"]
+    assert "You answered:\n> It returns `2` now" in run["prompt"]
+    assert run["prompt"].endswith("as a general comment on the PR, so name the code it is about.")
+    # Nothing is stored: the page saves the text as a draft.
+    _, page = call(server, "GET", "/api/pr")
+    assert page["comments"] == [] and len(page["questions"][0]["messages"]) == 2
+
+    assert call(server, "POST", "/api/questions/999/draft")[0] == 404
+
+
+def test_drafting_needs_an_answer_and_reports_a_failed_run(server, agent_log, monkeypatch):
+    anchor = {"anchor_kind": "pr"} | dict.fromkeys(
+        ("qualname", "fingerprint", "side", "start_offset", "end_side", "end_offset", "block", "quote")
+    )
+    question_id = server.store.add_question(server.pr_id, anchor)
+    server.store.add_message(question_id, "you", "Why?")
+    assert call(server, "POST", f"/api/questions/{question_id}/draft")[0] == 409
+
+    server.store.add_message(question_id, "agent", "Because.")
+    monkeypatch.setenv("FAKE_AGENT_MODE", "fail")
+    status, error = call(server, "POST", f"/api/questions/{question_id}/draft")
+    assert (status, error) == (502, {"error": "the agent failed: rate limited"})
+
+
 def test_question_endpoints_check_token_and_input(server):
     assert call(server, "POST", "/api/questions", {"anchor": {"kind": "pr"}, "text": ""})[0] == 400
     assert call(server, "POST", "/api/questions", {"anchor": {"kind": "pr"}, "text": "x"}, token=False)[0] == 403

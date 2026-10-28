@@ -46,10 +46,6 @@ const NOISE_SHORT = {
   "local-rename": "local renames", "symbol-rename": "private renames", move: "private moves", generated: "generated",
   hide: "nothing to review (Claude)",
 };
-const CATEGORY_TITLES = {
-  signature: "Signatures", "model-field": "Model fields", route: "Routes", cli: "CLI",
-  env: "Environment variables", dependency: "Dependencies", migration: "Migrations",
-};
 const FILTERS = [
   { key: "all", label: "All" },
   { key: "todo", label: "To review" },
@@ -65,7 +61,7 @@ const MAX_AUTO_OPEN = 25;
 const GAP_KEEP = 3; // unchanged lines kept around a collapsed run
 const GAP_MIN = 8; // shortest run of unchanged lines that gets collapsed
 const KEY_CONTEXT = 2; // lines shown around a highlight in the key-lines view of files without a skeleton
-const TABS = ["walkthrough", "architecture", "interfaces", "changes"];
+const TABS = ["walkthrough", "changes"];
 
 let data = null;
 const ui = {
@@ -81,9 +77,9 @@ const ui = {
   mode: "ask", // the composer's last mode
   editing: new Map(), // comment id -> text being edited
   followUp: new Map(), // question id -> follow-up being written
-  expanded: new Set(), // resolved questions shown in full
+  drafting: new Set(), // ids of questions Claude is writing a comment from
   streams: new Map(), // question id -> {status, text, sources, notices}: a running answer
-  drawer: null, // "questions" | "drafts": the open side panel
+  drawer: null, // "questions" | "drafts": the open side panel; drafts is step 3, posting the review
   // The review being submitted: its event and summary, and the preview
   // the server made of it, which posting must match.
   submit: { event: "COMMENT", body: "", includeOrphaned: false, preview: null, busy: false, error: null, posted: null },
@@ -230,7 +226,6 @@ function renderHeader() {
     el("span", { text: `analyzed ${analyzed.toLocaleString()}`, title: pr.analyzed_at }),
     el("a", { href: pr.url, target: "_blank", rel: "noopener", text: "Open on GitHub ↗" }),
   );
-  document.getElementById("count-interfaces").textContent = data.interfaces.length || "";
   document.getElementById("count-changes").textContent = visibleUnits().length || "";
 }
 
@@ -273,6 +268,7 @@ function renderProgress() {
     `Of ${n(lines.total)} changed lines: ${n(lines.read)} to read (${n(lines.reviewed)} reviewed, ` +
     `${n(lines.left)} left), ${n(lines.skim)} to skim, ${n(lines.hidden)} hidden (noise, or nothing to review). ` +
     `${seen} of ${units.length} units reviewed.`;
+  document.getElementById("tab-changes").classList.toggle("done", lines.read > 0 && lines.left === 0);
 }
 
 function renderBanner() {
@@ -327,7 +323,7 @@ async function renderHeadBanner() {
 function renderWalkthrough() {
   const panel = document.getElementById("panel-walkthrough");
   const { summary } = data;
-  const cards = [statsRow()];
+  const cards = [];
   const stale = summary?.stale && el("p", { class: "notice", text: "This was written for an earlier head. Run /pr-sift again to refresh it." });
 
   cards.push(prThreads());
@@ -355,7 +351,7 @@ function renderWalkthrough() {
       ),
     );
   }
-  cards.push(progressCard(data.units.filter(isHidden)));
+  cards.push(nextStepCard());
   panel.replaceChildren(...cards);
   for (const diagram of panel.querySelectorAll(".story .diagram")) drawDiagram(diagram, "story-graph");
 }
@@ -539,7 +535,47 @@ function statsRow() {
   return el("div", { class: "stats compact" }, stats);
 }
 
-function progressCard(hidden) {
+// The end of the walkthrough points to step 2, with how much there is to
+// read.
+function nextStepCard() {
+  const left = data.units.filter((u) => isRead(u) && u.state !== "seen").length;
+  return progressCard(data.units.filter(isHidden), "Next: review the changes",
+    el("div", { class: "next-foot" },
+      el("span", { class: "muted", text: left
+        ? `${plural(left, "unit")} to read, the most important first. Mark each one reviewed as you go.`
+        : "Everything to read is reviewed." }),
+      left
+        ? el("button", { class: "button primary", text: "Review the changes →", onclick: continueReview })
+        : el("button", { class: "button primary", text: "Post your review →", onclick: () => setDrawer("drafts") }),
+    ),
+  );
+}
+
+// The end of the Changes tab points to step 3.
+function postStepCard() {
+  const { left } = lineStats();
+  return el("div", { class: "card next-step" },
+    el("h2", { text: "Next: post your review" }),
+    el("div", { class: "next-foot" },
+      el("span", { class: "muted", text: `${left ? `${plural(left, "line")} left to read. ` : "Everything to read is reviewed. "}` +
+        "Your comments go to GitHub as one review: comment, approve or request changes." }),
+      el("button", { class: "button primary", text: "Post review →", onclick: () => setDrawer("drafts") }),
+    ),
+  );
+}
+
+// Go to the Changes tab, at the first unit still to read.
+function continueReview() {
+  selectTab("changes");
+  window.scrollTo({ top: 0 });
+  const next = unitNodes().find((node) => {
+    const u = data.units.find((x) => x.qualname === node.dataset.qualname);
+    return u && isRead(u) && u.state !== "seen";
+  });
+  if (next) setFocus(next.dataset.qualname);
+}
+
+function progressCard(hidden, title, foot) {
   const lines = lineStats();
   const n = (value) => value.toLocaleString();
   const reasons = {};
@@ -551,8 +587,8 @@ function progressCard(hidden) {
   }
   const meter = (className, value) =>
     el("div", { class: `meter-part ${className}`, style: { width: `${(100 * value) / (lines.total || 1)}%` } });
-  return el("div", { class: "card" },
-    el("h2", { text: "Changed lines" }),
+  return el("div", { class: "card next-step" },
+    el("h2", { text: title }),
     el("div", { class: "meter" }, meter("reviewed", lines.reviewed), meter("skim", lines.skim), meter("hidden", lines.hidden)),
     el("div", { class: "meter-legend" },
       el("span", {}, el("i", { class: "dot", style: { background: "var(--state-seen)" } }),
@@ -572,55 +608,8 @@ function progressCard(hidden) {
           el("span", { class: "chip", text: `${NOISE_SHORT[reason] || reason}: ${plural(r.units, "unit")}, ${plural(r.lines, "line")}` }),
         ),
     ),
+    foot,
   );
-}
-
-// Architecture
-
-async function renderArchitecture() {
-  const panel = document.getElementById("panel-architecture");
-  const arch = data.architecture;
-  const cards = [];
-  if (data.summary?.architecture_summary) {
-    cards.push(el("div", { class: "card" }, el("h2", { text: "Summary" }), el("p", { class: "lead" }, rich(data.summary.architecture_summary))));
-  }
-
-  const diagram = el("div", { class: "diagram" });
-  const nodes = Object.keys(arch?.nodes || {});
-  if (!nodes.length) {
-    cards.push(el("div", { class: "card empty", text: "No change to how modules depend on each other." }));
-  } else {
-    cards.push(
-      el("div", { class: "card" },
-        el("h2", { text: "Import graph" }),
-        diagram,
-        el("div", { class: "legend" },
-          el("span", {}, el("i", { class: "swatch", style: { "border-color": "#1a7f37" } }), "added"),
-          el("span", {}, el("i", { class: "swatch", style: { "border-color": "#cf222e", "border-style": "dashed" } }), "removed"),
-          el("span", {}, el("i", { class: "swatch", style: { "border-color": "#9a6700" } }), "changed"),
-          el("span", {}, el("i", { class: "line-swatch", style: { "border-color": "#1a7f37" } }), "new import"),
-          el("span", {}, el("i", { class: "line-swatch", style: { "border-color": "#cf222e", "border-top-style": "dashed" } }), "removed import"),
-          el("span", { text: `Modules grouped to depth ${arch.depth}` }),
-        ),
-      ),
-    );
-  }
-
-  const added = arch?.external_added || [];
-  const removed = arch?.external_removed || [];
-  if (added.length || removed.length) {
-    cards.push(
-      el("div", { class: "card" },
-        el("h2", { text: "Third-party packages" }),
-        el("div", { class: "packages" },
-          added.map((p) => el("code", { class: "chip added", text: `+ ${p}` })),
-          removed.map((p) => el("code", { class: "chip removed", text: `− ${p}` })),
-        ),
-      ),
-    );
-  }
-  panel.replaceChildren(...cards);
-  if (nodes.length) await drawDiagram(diagram, "arch-graph");
 }
 
 async function drawDiagram(container, id) {
@@ -634,104 +623,6 @@ async function drawDiagram(container, id) {
   } catch (error) {
     container.replaceChildren(el("pre", { text }));
   }
-}
-
-// Interfaces
-
-function renderInterfaces() {
-  const panel = document.getElementById("panel-interfaces");
-  if (!data.interfaces.length) {
-    panel.replaceChildren(el("div", { class: "card empty", text: "No interface changes detected." }));
-    return;
-  }
-  const units = new Map(data.units.map((u) => [u.qualname, u]));
-  const groups = Object.keys(CATEGORY_TITLES)
-    .map((category) => [category, data.interfaces.filter((c) => c.category === category)])
-    .filter(([, items]) => items.length);
-  panel.replaceChildren(
-    ...groups.map(([category, items]) =>
-      el("div", { class: "card iface-group" },
-        el("h2", { text: `${CATEGORY_TITLES[category]} (${items.length})` }),
-        items.map((change) => {
-          const unit = change.qualnames.map((q) => units.get(q)).find(Boolean)
-            || data.units.find((u) => !change.qualnames.length && u.path === change.path);
-          const name = unit
-            ? el("a", { href: "#changes", text: change.name, onclick: (e) => { e.preventDefault(); revealUnit(unit.qualname); } })
-            : change.name;
-          return el("div", { class: "iface" },
-            el("span", {}, el("span", { class: `chip ${change.status}`, text: change.status })),
-            el("div", { class: "name" }, name),
-            interfaceDetail(change, unit),
-            el("div", { class: "values" }, interfaceValues(change.before, change.after)),
-          );
-        }),
-      ),
-    ),
-  );
-}
-
-// One line on what the changed interface is: a field's comment, the
-// docstring, else what Claude says it does, else the summary of its
-// unit's change. A model field without a comment shows nothing, since
-// its class's line already shows on the class's signature.
-function interfaceDetail(change, unit) {
-  if (change.doc) return el("p", { class: "iface-doc" }, el("span", { class: "doc-source", text: "comment" }), rich(change.doc));
-  if (!unit || change.category === "model-field") return null;
-  const [source, text] = unit.docstring
-    ? ["docstring", unit.docstring]
-    : unit.description
-      ? ["what it does", unit.description]
-      : unit.summary
-        ? ["change", unit.summary]
-        : [null, null];
-  if (!text) return null;
-  return el("p", { class: "iface-doc" }, el("span", { class: "doc-source", text: source }), rich(text));
-}
-
-const MAX_WORD_DIFF_TOKENS = 600;
-
-function tokens(text) {
-  return text.split(/(\s+|[()[\]{},:=|*])/).filter(Boolean);
-}
-
-// Mark the tokens of a and b that are not in their longest common subsequence.
-function wordDiff(a, b) {
-  const n = a.length, m = b.length;
-  const lcs = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-    }
-  }
-  const keepA = new Array(n).fill(false), keepB = new Array(m).fill(false);
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { keepA[i++] = true; keepB[j++] = true; }
-    else if (lcs[i + 1][j] >= lcs[i][j + 1]) i++;
-    else j++;
-  }
-  return [keepA, keepB];
-}
-
-function markedValue(className, parts, keep) {
-  const node = el("div", { class: `value ${className}` });
-  parts.forEach((part, k) => node.append(keep[k] ? document.createTextNode(part) : el("mark", { text: part })));
-  return node;
-}
-
-function interfaceValues(before, after) {
-  if (!before || !after) {
-    return [
-      before && el("div", { class: "value before", text: before }),
-      after && el("div", { class: "value after", text: after }),
-    ];
-  }
-  const a = tokens(before), b = tokens(after);
-  if (a.length + b.length > MAX_WORD_DIFF_TOKENS) {
-    return [el("div", { class: "value before", text: before }), el("div", { class: "value after", text: after })];
-  }
-  const [keepA, keepB] = wordDiff(a, b);
-  return [markedValue("before", a, keepA), markedValue("after", b, keepB)];
 }
 
 // Changes
@@ -787,7 +678,7 @@ function renderChanges() {
       ),
     );
   }
-  panel.replaceChildren(toolbar, ...(groups.length ? groups : [el("div", { class: "card empty", text: "Nothing here." })]));
+  panel.replaceChildren(statsRow(), toolbar, ...(groups.length ? groups : [el("div", { class: "card empty", text: "Nothing here." })]), postStepCard());
   if (ui.focus) setFocus(ui.focus, false);
 }
 
@@ -1428,25 +1319,39 @@ function anchorChips(anchor) {
 
 function questionCard(q, inDrawer = false) {
   const running = q.status === "queued" || q.status === "running";
-  const collapsed = q.resolved && !ui.expanded.has(q.id) && !running;
+  // A collapsed thread is one line; the store keeps it as resolved.
+  const collapsed = q.resolved && !running;
   const first = q.messages.find((m) => m.role === "you");
   const answer = [...q.messages].reverse().find((m) => m.role === "agent");
-  const head = el("div", { class: "thread-head" },
+  const toggle = () => { if (!running) collapseQuestion(q, !collapsed); };
+  const head = el("div", { class: "thread-head", onclick: (e) => { if (!e.target.closest("a, button")) toggle(); } },
+    el("button", {
+      class: "thread-toggle",
+      title: collapsed ? "Expand" : "Collapse",
+      "aria-expanded": String(!collapsed),
+      disabled: running,
+      text: "▾",
+      onclick: toggle,
+    }),
     el("span", { class: "thread-icon", text: "?" }),
     inDrawer
       ? el("a", { href: "#", class: "thread-where", onclick: (e) => { e.preventDefault(); jumpTo(q.anchor); } }, anchorLabel(q.anchor, true))
       : el("span", { class: "thread-where", text: "Question" }),
     anchorChips(q.anchor),
-    q.resolved && el("span", { class: "chip", text: "resolved" }),
     ["failed", "cancelled"].includes(q.status) && el("span", { class: "chip removed", text: q.status }),
     el("span", { class: "spacer" }),
     running && el("button", { class: "link-button", text: "Stop", onclick: () => cancelQuestion(q) }),
-    !running && el("button", { class: "link-button", text: q.resolved ? "Reopen" : "Resolve", onclick: () => resolveQuestion(q, !q.resolved) }),
-    el("button", { class: "link-button danger", title: "Delete the thread", text: "Delete", onclick: () => deleteQuestion(q) }),
+    !running && el("button", {
+      class: "thread-close",
+      title: collapsed ? "Expand the thread" : "Collapse the thread; it stays under Questions",
+      "aria-label": collapsed ? "Expand" : "Collapse",
+      text: collapsed ? "Show" : "✕",
+      onclick: toggle,
+    }),
   );
-  const card = el("div", { class: `thread question ${q.resolved ? "resolved" : ""}`, dataset: { thread: `q:${q.id}` } }, head);
+  const card = el("div", { class: `thread question ${collapsed ? "collapsed" : ""}`, dataset: { thread: `q:${q.id}` } }, head);
   if (collapsed) {
-    card.append(el("button", { class: "thread-collapsed", onclick: () => { ui.expanded.add(q.id); refreshFor(q.anchor); } },
+    card.append(el("button", { class: "thread-collapsed", onclick: toggle },
       first ? first.body : "", answer ? el("span", { class: "muted", text: " · answered" }) : null));
     return card;
   }
@@ -1485,7 +1390,14 @@ function questionCard(q, inDrawer = false) {
           document.querySelector(`[data-thread="q:${q.id}"] .follow-up textarea`)?.focus();
         },
       }),
-      answer && el("button", { class: "button small", title: "Start a comment draft from this answer", text: "→ Draft comment from this", onclick: () => draftFromAnswer(q, answer) }),
+      answer && data.agent.available && el("button", {
+        class: "button small",
+        title: "Have Claude write a review comment from this thread, as a draft to edit",
+        disabled: ui.drafting.has(q.id),
+        onclick: () => draftFromAnswer(q),
+      }, ui.drafting.has(q.id) ? [el("span", { class: "spinner" }), " Drafting…"] : "→ Draft a comment"),
+      el("span", { class: "spacer" }),
+      el("button", { class: "link-button danger", title: "Delete the thread", text: "Delete", onclick: () => deleteQuestion(q) }),
     ));
   }
   return card;
@@ -1591,11 +1503,14 @@ async function cancelQuestion(q) {
   }
 }
 
-async function resolveQuestion(q, resolved) {
+async function collapseQuestion(q, collapsed) {
+  q.resolved = collapsed;
+  refreshFor(q.anchor);
   try {
-    ui.expanded.delete(q.id);
-    replaceQuestion(await api("PATCH", `/api/questions/${q.id}`, { resolved }));
+    replaceQuestion(await api("PATCH", `/api/questions/${q.id}`, { resolved: collapsed }));
   } catch (error) {
+    q.resolved = !collapsed;
+    refreshFor(q.anchor);
     toast(`Couldn't save: ${error.message}`);
   }
 }
@@ -1613,28 +1528,30 @@ async function deleteQuestion(q) {
   }
 }
 
-// A comment draft at the question's anchor, with the answer as its body.
-// The walkthrough isn't on GitHub, so such a draft goes to the PR and
-// quotes what was asked about.
-async function draftFromAnswer(q, answer) {
-  let anchor = anchorInput(q.anchor);
-  let body = answer.body;
-  if (q.anchor.kind === "walkthrough" || q.anchor.state === "orphaned") {
-    anchor = { kind: "pr" };
-    if (q.anchor.quote) body = `${q.anchor.quote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n${body}`;
-  }
+// A comment draft at the question's anchor that Claude writes from the
+// thread, open for editing. The walkthrough isn't on GitHub, so a draft
+// from a question about it goes to the PR.
+async function draftFromAnswer(q) {
+  const anchor = q.anchor.kind === "walkthrough" || q.anchor.state === "orphaned" ? { kind: "pr" } : anchorInput(q.anchor);
+  ui.drafting.add(q.id);
+  refreshFor(q.anchor);
+  let comment = null;
   try {
-    const comment = await api("POST", "/api/comments", { anchor, body, question_id: q.id });
+    const { body } = await api("POST", `/api/questions/${q.id}/draft`);
+    comment = await api("POST", "/api/comments", { anchor, body, question_id: q.id });
     data.comments.push(comment);
     invalidatePreview();
     ui.editing.set(comment.id, comment.body);
-    refreshFor(comment.anchor);
-    const area = document.querySelector(`[data-thread="c:${comment.id}"] textarea`);
-    area?.focus();
-    area?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   } catch (error) {
-    toast(`Couldn't create the draft: ${error.message}`);
+    toast(`Couldn't draft a comment: ${error.message}`);
   }
+  ui.drafting.delete(q.id);
+  refreshFor(q.anchor);
+  if (!comment) return;
+  refreshFor(comment.anchor);
+  const area = document.querySelector(`[data-thread="c:${comment.id}"] textarea`);
+  area?.focus();
+  area?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 function commentCard(c, inDrawer = false) {
@@ -1721,18 +1638,25 @@ function jumpTo(anchor) {
 
 function renderInbox() {
   const running = data.questions.filter((q) => q.status === "queued" || q.status === "running").length;
-  const open = data.questions.filter((q) => !q.resolved).length;
   const drafts = data.comments.filter((c) => c.state === "draft").length;
-  const button = (key, label, count, extra) =>
-    el("button", {
-      class: `inbox-button ${ui.drawer === key ? "on" : ""}`,
-      "aria-pressed": String(ui.drawer === key),
-      onclick: () => { ui.drawer = ui.drawer === key ? null : key; renderDrawer(); renderInbox(); },
-    }, label, el("span", { class: "count", text: count || "" }), extra);
   document.getElementById("inbox").replaceChildren(
-    button("questions", "Questions", open, running > 0 && el("span", { class: "running", title: `${running} running` }, el("span", { class: "spinner" }), running)),
-    button("drafts", "Drafts", drafts),
+    el("button", {
+      class: `inbox-button ${ui.drawer === "questions" ? "on" : ""}`,
+      "aria-pressed": String(ui.drawer === "questions"),
+      onclick: () => setDrawer(ui.drawer === "questions" ? null : "questions"),
+    }, "Questions", el("span", { class: "count", text: data.questions.length || "" }),
+      running > 0 && el("span", { class: "running", title: `${running} running` }, el("span", { class: "spinner" }), running)),
   );
+  const post = document.getElementById("step-post");
+  post.setAttribute("aria-pressed", String(ui.drawer === "drafts"));
+  post.classList.toggle("done", data.submissions?.length > 0 && !drafts);
+  document.getElementById("count-drafts").textContent = drafts || "";
+}
+
+function setDrawer(key) {
+  ui.drawer = key;
+  renderDrawer();
+  renderInbox();
 }
 
 function renderDrawer() {
@@ -1749,17 +1673,17 @@ function renderDrawer() {
     : drafts.map((c) => commentCard(c, true));
   const empty = ui.drawer === "questions"
     ? "No questions yet. Select code or text, or hover a line, and ask Claude about it."
-    : "No draft comments yet. Hover a line and click +, or select lines, to write one.";
+    : data.static ? STATIC_NOTE : "No draft comments yet. Hover a line and click +, or select lines, to write one. You can also post a review without them.";
   drawer.replaceChildren(
     el("div", { class: "drawer-head" },
       el("div", { class: "segmented small", role: "group" },
-        el("button", { "aria-pressed": String(ui.drawer === "questions"), onclick: () => { ui.drawer = "questions"; renderDrawer(); renderInbox(); } }, `Questions (${questions.length})`),
-        el("button", { "aria-pressed": String(ui.drawer === "drafts"), onclick: () => { ui.drawer = "drafts"; renderDrawer(); renderInbox(); } }, `Drafts (${drafts.length})`),
+        el("button", { "aria-pressed": String(ui.drawer === "questions"), onclick: () => setDrawer("questions") }, `Questions (${questions.length})`),
+        el("button", { "aria-pressed": String(ui.drawer === "drafts"), onclick: () => setDrawer("drafts") }, `Post review (${drafts.length})`),
       ),
-      el("button", { class: "icon-button", title: "Close", text: "✕", onclick: () => { ui.drawer = null; renderDrawer(); renderInbox(); } }),
+      el("button", { class: "icon-button", title: "Close", text: "✕", onclick: () => setDrawer(null) }),
     ),
     el("div", { class: "drawer-body" },
-      ui.drawer === "drafts" && (drafts.length > 0 || ui.submit.posted) && submitCard(drafts),
+      ui.drawer === "drafts" && !data.static && submitCard(drafts),
       list.length ? list : el("p", { class: "empty", text: empty }),
       ui.drawer === "drafts" && postedReviews(),
     ),
@@ -2035,6 +1959,7 @@ async function updateReview(unit, change, advance = false) {
     data.has_reviews = data.has_reviews || updated.state === "seen";
     const next = advance && change.reviewed ? neighborUnit(unit.qualname, 1) : null;
     if (change.reviewed) ui.open.delete(unit.qualname);
+    if (change.reviewed && isRead(unit) && lineStats().left === 0) toast("Everything to read is reviewed. Next: post your review (3).");
     renderProgress();
     renderBanner();
     renderWalkthrough();
@@ -2127,14 +2052,16 @@ function onKey(event) {
     document.getElementById("help-close").focus();
     return;
   }
-  if (/^[1-4]$/.test(event.key)) {
+  if (/^[12]$/.test(event.key)) {
     selectTab(TABS[Number(event.key) - 1]);
     return;
   }
+  if (event.key === "3") {
+    setDrawer(ui.drawer === "drafts" ? null : "drafts");
+    return;
+  }
   if (event.key === "Escape" && ui.drawer) {
-    ui.drawer = null;
-    renderDrawer();
-    renderInbox();
+    setDrawer(null);
     return;
   }
   if (event.key === "a" || event.key === "c") {
@@ -2180,6 +2107,10 @@ function onKey(event) {
 async function main() {
   loadPrefs();
   for (const tab of TABS) document.getElementById(`tab-${tab}`).addEventListener("click", () => selectTab(tab));
+  document.getElementById("step-post").addEventListener("click", () => setDrawer(ui.drawer === "drafts" ? null : "drafts"));
+  // Open units' headers stick under the bar, whose height changes as it wraps.
+  const bar = document.getElementById("bar");
+  new ResizeObserver(() => document.documentElement.style.setProperty("--bar-height", `${bar.offsetHeight}px`)).observe(bar);
   document.getElementById("help-close").addEventListener("click", () => (document.getElementById("help").hidden = true));
   document.getElementById("help").addEventListener("click", (e) => { if (e.target.id === "help") e.target.hidden = true; });
   document.addEventListener("keydown", onKey);
@@ -2208,10 +2139,8 @@ async function main() {
   renderBanner();
   renderHeadBanner();
   renderWalkthrough();
-  renderInterfaces();
   renderChanges();
   selectTab(location.hash.slice(1) || (data.summary ? "walkthrough" : "changes"));
-  await renderArchitecture();
 }
 
 main();

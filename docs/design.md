@@ -377,9 +377,9 @@ flagged in memory only, and comments and questions are turned off.
 
 ```
 ┌ PR #123  Add retry policy to HTTP client      ● 3 new since your last review ┐
-│ [Overview] [Architecture] [Interfaces] [Changes]  ▓▓▓▓▒▒░░ 38% ✓ · 12% hidden │
+│ (1) Walkthrough › (2) Changes 23 › (3) Post review 3   Questions  ▓▓▓▒░ 38% │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ Overview: 3-sentence PR summary + per-component behavior bullets         │
+│ [2 Architecture] [4 Interface] [7 Behavior] [9 Detail] [5 Skim] [31 Hid] │
 │                                                                          │
 │ ▼ ARCHITECTURE (2)                                                       │
 │   ● NEW  http/ → retry/   (new dependency)                     [✓] [💬]  │
@@ -391,29 +391,36 @@ flagged in memory only, and comments and questions are turned off.
 │ ▶ DETAIL (9)                                                             │
 │ ▶ HIDDEN (31): 18 rename · 9 docstring · 4 formatting                    │
 │                                                                          │
-│ [Show only unreviewed]            Questions (2) · Drafts (3) [Submit ▾]  │
+│ Next: post your review                                  [Post review →]  │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Tabs:**
+**Steps:** the bar numbers the way through a review, and each step
+ends by pointing to the next one.
 
-- **Walkthrough** (first): unit counts, the walkthrough (or the
-  summary when there is none), per-component behavior bullets, and
-  changed lines: the share reviewed, to read, to skim and hidden.
-- **Architecture:** the Mermaid graph diff, the summary, new
-  third-party dependencies.
-- **Interfaces:** a before/after table of signatures, model fields,
-  routes, CLI options, env vars and dependencies, with the differing
-  tokens highlighted. Each change has a one-line detail: a field's
-  comment, the symbol's docstring, Claude's description, or else the
-  summary of the change. Names link to their unit.
-- **Changes:** three groups, each with its unit and line counts:
+1. **Walkthrough:** the walkthrough (or the summary when there is
+   none), with the import graph where it helps, per-component behavior
+   bullets, and a last card on what is left: changed lines reviewed,
+   to read, to skim and hidden, and a button to the first unit still
+   to read.
+2. **Changes:** unit counts by tier, which jump to their section, then
+   three groups, each with its unit and line counts:
   - **Read:** full cards, in tier sub-sections (Architecture,
     Interface, Behavior, Detail); within a tier, units with highlights
     come first, then bigger ones. Folds show as tables in the diff.
   - **Skim:** a one-line list (name and summary, the reason on hover).
     Highlights stay visible under their row.
   - **Hidden:** the same list for noise, collapsed.
+
+   The step shows ✓ once everything to read is reviewed. An open
+   unit's header sticks under the bar, so its **Mark reviewed** button
+   is at hand at the end of a long diff.
+3. **Post review:** opens the panel with the drafts and the review to
+   submit (see [Posting to GitHub](#posting-to-github)). A review can be posted without
+   drafts, to approve.
+
+Interface changes show in their units' diffs and chips, and the
+import graph in the walkthrough, so neither has a tab of its own.
 
 **Interaction:**
 
@@ -427,7 +434,8 @@ flagged in memory only, and comments and questions are turned off.
 - Filter: all, to review, changed since review, flagged.
 - Keyboard: `j`/`k` next and previous unit, `o` expand or collapse,
   `r` mark reviewed and move on, `f` flag, `c` comment and `a` ask on
-  the focused line or selection, `1`–`4` tabs, `?` help.
+  the focused line or selection, `1` and `2` the Walkthrough and
+  Changes, `3` the Post review panel, `?` help.
 - UI preferences (filter, collapsed sections) are kept in
   `localStorage`. All review state is kept in SQLite through the server.
 
@@ -449,7 +457,8 @@ flagged in memory only, and comments and questions are turned off.
 | `POST` | `/api/questions/<id>/messages` | ask a follow-up in the thread |
 | `GET` | `/api/questions/<id>/events` | the running answer, as server-sent events |
 | `POST` | `/api/questions/<id>/cancel` | stop the running agent |
-| `PATCH`, `DELETE` | `/api/questions/<id>` | resolve or delete a thread |
+| `POST` | `/api/questions/<id>/draft` | a review comment the agent writes from the thread |
+| `PATCH`, `DELETE` | `/api/questions/<id>` | collapse (stored as `resolved`) or delete a thread |
 
 Every mutating request must carry a per-session token that the server
 generates at startup and injects into the page. This keeps other local
@@ -480,7 +489,7 @@ After a new analysis:
 - same `fingerprint`: the anchor is current.
 - same `qualname`, different fingerprint: the thread or draft is
   marked **stale** and still shown at its offset when it fits.
-- `qualname` gone: it is **orphaned** and listed in the Drafts or
+- `qualname` gone: it is **orphaned** and listed in the Post review or
   Questions panel instead of being lost.
 - a `walkthrough` anchor goes stale when the walkthrough is
   regenerated; its `quote` keeps it readable.
@@ -501,7 +510,7 @@ place: questions and answers are private and are never posted.
      │ up to 30s. But a 429's Retry-After header is ignored          │
      │ (client.py:71), so a rate-limited call can retry too early.   │
      │ Sources: http/client.py · urllib3 docs: Retry.respect_retry…  │
-     │ [Follow up…]  [→ Draft comment from this]  [Resolve]          │
+     │ [Follow up…]  [→ Draft a comment]                     Delete  │
      └───────────────────────────────────────────────────────────────┘
  44 + │         resp = session.get(url, timeout=t)
 ```
@@ -515,12 +524,17 @@ place: questions and answers are private and are never posted.
   ("Reading http/client.py…", "Searching the web…"). You can keep
   reading, and several questions can run at once; a header badge counts
   the running ones.
-- **Follow up** continues the thread. **Draft comment from this**
-  creates a comment draft at the same anchor with the answer as its
-  editable body (a `walkthrough` anchor becomes a `pr` draft quoting
-  the text). **Resolve** collapses the thread.
-- A **Questions** panel next to Drafts lists all threads, with stale
-  and orphaned ones marked, and jumps to them.
+- **Follow up** continues the thread. **Draft a comment** has the
+  agent write a short review comment from the thread, in the
+  reviewer's voice, and opens it as a draft at the same anchor to edit
+  (a `walkthrough` anchor becomes a `pr` draft). That run has no tools
+  and starts no session: `claude -p --output-format json --tools ""`
+  with the thread's prompt context, the conversation and where the
+  comment goes.
+- A click on the thread's header collapses it to one line, and the
+  report remembers that. **Delete** removes it.
+- A **Questions** panel next to Post review lists all threads, with
+  stale and orphaned ones marked, and jumps to them.
 
 **The agent run** (`pr_sift/agent.py`):
 
@@ -594,7 +608,7 @@ timeout_seconds = 300
 
 ## Posting to GitHub
 
-`pr_sift/posting.py`. In the Drafts panel you write a summary, pick
+`pr_sift/posting.py`. In the Post review panel you write a summary, pick
 `COMMENT`, `APPROVE` or `REQUEST_CHANGES`, and preview. Nothing is sent
 until you confirm the preview.
 
@@ -813,7 +827,7 @@ subprocess fed length-prefixed messages on stdin.
 4. **Report:** `server.py` and the web UI with review state.
 5. **Ask and comments:** shared anchors and the popover; questions
    with the agent run, streaming, follow-ups and web access; comment
-   drafts, "Draft comment from this", and the Drafts and Questions
+   drafts, "Draft a comment", and the Post review and Questions
    panels.
 6. **Posting:** line mapping to the GitHub diff, the confirmation step,
    submitting reviews.

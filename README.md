@@ -69,13 +69,16 @@ pr-sift status
 pr-sift extension install                 # connect the Chrome extension
 ```
 
-In the report, hover a line and click **+**, or select lines or
-walkthrough text, to write a comment draft or ask Claude about it
-(keys `c` and `a`). Questions run `claude -p` in a checkout of the PR
-head, with read-only file tools and web search, using your Claude Code
-login and default model. Questions are private. Drafts stay local
-until you submit them from the Drafts panel: preview where each one
-goes, then post them as one GitHub review through `gh`.
+The report takes you through three steps: read the **Walkthrough**,
+review the **Changes** unit by unit, then **Post review**. Hover a
+line and click **+**, or select lines or walkthrough text, to write a
+comment draft or ask Claude about it (keys `c` and `a`). Questions run
+`claude -p` in a checkout of the PR head, with read-only file tools
+and web search, using your Claude Code login and default model.
+Questions are private; **Draft a comment** has Claude turn a thread
+into a short review comment for you to edit. Drafts stay local until
+you post them: preview where each one goes, then post them as one
+GitHub review through `gh`.
 
 Data lives in `~/.local/share/pr-sift` and repository clones in
 `~/.cache/pr-sift`; set `PR_SIFT_DATA_DIR` and `PR_SIFT_CACHE_DIR`
