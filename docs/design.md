@@ -632,6 +632,80 @@ until you confirm the preview.
 GitHub's own errors, such as approving your own PR or an existing
 pending review, are shown as they come, and the drafts stay drafts.
 
+## Chrome extension
+
+`pr_sift/chrome/` is a Manifest V3 extension that puts a card on
+GitHub pull request pages; `pr_sift/native_host.py` is the pr-sift end.
+The analysis and ranking stay in Python and Claude Code, so the
+extension holds no logic of its own: it asks pr-sift.
+
+```
+┌ PR Sift                         – ┐
+│ 14 to read · 8 to skim · 6 hidden │
+│ ▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░ │
+│ 9 of 22 reviewed · 1 flagged      │
+│ 3 changed since your review       │
+│ New commits since the sift        │
+│ [Open report] [Sift again]        │
+└───────────────────────────────────┘
+```
+
+**Connection.** Chrome native messaging: when the extension connects,
+Chrome starts the host named in a manifest, and they exchange JSON
+messages, each prefixed by its 32-bit length, over the host's stdin
+and stdout. Only the extension the manifest names can connect. Its id
+is pinned by the public `key` in `manifest.json`, so an unpacked copy
+loaded from any folder has the same id. `pr-sift extension install`
+writes the manifest into each Chromium browser's
+`NativeMessagingHosts` folder, pointing at a wrapper script in the data
+directory. The wrapper restores `PATH` and the `PR_SIFT_*` and `GH_*`
+variables as they were at install time, since Chrome starts hosts with
+a bare environment, and runs `python -m pr_sift.cli extension host`
+with the Python pr-sift is installed in. The host keeps its replies on a
+private copy of stdout and points fd 1 at stderr, so nothing the tools
+it runs print can corrupt the stream.
+
+**Lifetime.** The background service worker holds one connection for
+every tab, and an open native port keeps the worker alive, so the host
+runs as long as the browser does. Report servers live in the host: one
+`ReportServer` per PR, on a free port, started the first time its
+report is opened. A sift runs in its own process group and outlives
+the host.
+
+**Requests.** Each has an `id`, which the reply repeats, a `type` and
+the PR's URL:
+
+| Type | Does | Reply |
+|---|---|---|
+| `status` | What pr-sift knows about the PR; with `check_head`, also asks GitHub for the PR's head | `analyzed`, `ranked` (the stored summary is for the analyzed head), counts of units to read, skim and hidden as the report counts them, reviewed, changed since review and flagged, `head_moved`, and the sift's state |
+| `sift` | Starts a sift; `rerank` ranks every unit again | the sift's state |
+| `cancel` | Stops the running sift | the sift's state |
+| `open` | Starts the PR's report server if needed | its `url` |
+
+**Sifting** runs the skill headless: `claude -p` (the agent command from
+the config) is told to follow steps 1 to 4 of the pr-sift skill for the
+PR, with only `pr-sift analyze`, `pr-sift ingest`, `jq` and file tools
+allowed and anything else denied (`--permission-mode dontAsk`). It
+runs in `<data>/sifts/<host>/<owner>/<repo>/<n>/`, which keeps
+`job.json` (pid, start time), the agent's stream-json log and its
+stderr, so a later host can tell how a run went: running while the pid
+lives, done after a successful result message, failed with the
+result's error or the tail of stderr otherwise. The step shown while
+it runs comes from the last tool call in the log: analyzing, reading
+the analysis, ranking, storing.
+
+**The card** lives in a shadow root at the bottom right of every page
+under `/<owner>/<repo>/pull/<n>`, and checks the URL every second, since
+GitHub changes pages without loading them. It polls while a sift runs,
+refreshes when the tab becomes visible again (coming back from the
+report), and minimizes into a pill. Colors come from GitHub's Primer
+variables, so it follows GitHub's light and dark themes. **Open report**
+opens the report next to the PR's tab, or switches to the tab it opened
+before, reloading it if the report moved to a new port.
+
+Only github.com for now: GitHub Enterprise hosts would need their
+origins in the manifest.
+
 ## CLI
 
 ```
@@ -639,6 +713,8 @@ pr-sift analyze <pr> [--repo owner/name] [--out analysis.json]
 pr-sift ingest  <pr> <ranking.json>
 pr-sift serve   <pr> [--no-open] [--port N]
 pr-sift status  [<pr>]          # PRs known locally, review progress
+pr-sift extension install [--browser-dir DIR]   # let Chrome start pr-sift
+pr-sift extension host          # what Chrome runs for the extension
 ```
 
 `<pr>` is a number (repo taken from the current directory's remote),
@@ -665,7 +741,7 @@ For very large PRs, the skill ranks units in batches by package.
 
 ```
 pr_sift/
-  cli.py            # analyze | ingest | serve | status
+  cli.py            # analyze | ingest | serve | status | extension
   github.py         # gh wrappers: PR metadata, cloning, post review
   repo.py           # cached bare clones, worktrees, reading files at a SHA
   units.py          # ast → symbol units, normalization, fingerprints
@@ -678,7 +754,9 @@ pr_sift/
   server.py         # stdlib HTTP server and JSON API
   agent.py          # runs the agent for questions, parses its stream
   config.py         # ~/.config/pr-sift/config.toml
+  native_host.py    # the Chrome extension's native messaging host, sifting
   web/              # index.html, app.js, styles.css, vendor/
+  chrome/           # the Chrome extension: manifest, background, content script
 skills/pr-sift/SKILL.md
 tests/
 docs/design.md
@@ -710,7 +788,10 @@ multi-line ranges within and across hunks, and unwrapping. Anchors get tests for
 following a symbol, going stale and being orphaned across a
 force-push. The agent is tested with a stub command that prints a
 recorded `stream-json` transcript: streaming, sources, resuming a
-session, timeouts, cancel and the parallel limit.
+session, timeouts, cancel and the parallel limit. The native host is
+tested through its message framing, with a stub sifting agent (done,
+failed, crashed, cancelled), and end to end as Chrome runs it: a
+subprocess fed length-prefixed messages on stdin.
 
 ## Milestones
 
@@ -726,6 +807,8 @@ session, timeouts, cancel and the parallel limit.
    panels.
 6. **Posting:** line mapping to the GitHub diff, the confirmation step,
    submitting reviews.
+7. **Chrome extension:** the card on GitHub, the native messaging host,
+   sifting from the browser.
 
 ## Open questions
 

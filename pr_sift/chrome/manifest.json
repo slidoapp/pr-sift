@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "PR Sift",
+  "version": "0.1.0",
+  "description": "Sift GitHub pull requests by what matters, and open their PR Sift report.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApWlp7yBxubrbTO3fnAesPfdBWQoJCsNYHgkS4Lv6Mh8vVCQhGq0w/TscsVlKd26k973mUglRDsV/bDBvps4YUKxBiLR/ig1kgWjmUoF8rHIY8nEYdi1P6eMjBeKRAg4euuQ/ZIK0kDKnYFGbhVgkSBCCLT5HevteIjKtb7JfW1FMVYoP8nsGHUXcwcnq1YoY8mxXzPrC1j2EmtJkufrUy2upDUm6DNtP+wpz4Frwb3y6aShG7FFD/5yv78fLdOmIFPLY255qeOuAt7S+mmBznsZnfV75cbitwkchV1dIoRYPzhYRzgZny6ODbOhRtW5+6dHQc1zGKcfW+58gLxf3AwIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["nativeMessaging", "storage"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

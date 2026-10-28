@@ -1,4 +1,4 @@
-"""Command line interface: pr-sift analyze | ingest | serve | status."""
+"""Command line interface: pr-sift analyze | ingest | serve | status | extension."""
 
 import argparse
 import json
@@ -8,7 +8,7 @@ import webbrowser
 from collections import Counter
 from pathlib import Path
 
-from pr_sift import github, repo
+from pr_sift import github, native_host, repo
 from pr_sift.analysis import analyze_revisions, ranking_input, report_data
 from pr_sift.config import ConfigError, load_agent_config
 from pr_sift.ranking import to_offsets, validate, validate_walkthrough
@@ -45,8 +45,19 @@ def main(argv: list[str] | None = None) -> int:
     status.add_argument("pr", nargs="?")
     status.add_argument("--repo")
 
+    extension = commands.add_parser("extension", help="connect the Chrome extension to pr-sift")
+    extension_commands = extension.add_subparsers(dest="extension_command", required=True)
+    install = extension_commands.add_parser("install", help="let Chrome start pr-sift for the extension")
+    install.add_argument(
+        "--browser-dir", type=Path, action="append",
+        help="a browser's user data directory; default: every Chromium browser found (repeatable)",
+    )
+    host = extension_commands.add_parser("host", help="what Chrome runs: talk to the extension on stdin and stdout")
+    host.add_argument("origin", nargs="*", help="passed by Chrome")
+
     args = parser.parse_args(argv)
-    commands = {"analyze": cmd_analyze, "ingest": cmd_ingest, "serve": cmd_serve, "status": cmd_status}
+    commands = {"analyze": cmd_analyze, "ingest": cmd_ingest, "serve": cmd_serve, "status": cmd_status,
+                "extension": cmd_extension}
     try:
         return commands[args.command](args)
     except (github.GitHubError, repo.GitError) as e:
@@ -228,6 +239,23 @@ def cmd_status(args) -> int:
             f"{len(units)} units, {len(units) - len(visible)} hidden, "
             f"{sum(u['fingerprint'] in ranked for u in visible)}/{len(visible)} ranked"
         )
+    return 0
+
+
+def cmd_extension(args) -> int:
+    if args.extension_command == "host":
+        return native_host.run()
+    wrapper, manifests = native_host.install(args.browser_dir)
+    if not manifests:
+        print("error: no Chromium browser found; pass its user data directory with --browser-dir", file=sys.stderr)
+        return 1
+    print(f"Chrome starts {wrapper} for the extension, as told by:")
+    print(*(f"  {path}" for path in manifests), sep="\n")
+    print(
+        "\nTo load the extension, open chrome://extensions, turn on Developer mode,"
+        f"\nclick Load unpacked and choose {native_host.EXTENSION_DIR}"
+        "\nRun this again after moving the pr-sift checkout or changing PATH."
+    )
     return 0
 
 

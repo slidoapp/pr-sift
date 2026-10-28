@@ -45,6 +45,7 @@ Or run the analysis yourself:
 pr-sift analyze 123 --out analysis.json   # or owner/repo#123, or a PR URL
 pr-sift serve 123                         # open the report in the browser
 pr-sift status
+pr-sift extension install                 # connect the Chrome extension
 ```
 
 In the report, hover a line and click **+**, or select lines or
@@ -70,6 +71,31 @@ web_fetch_domains = []        # e.g. ["docs.python.org", "pypi.org"] to allow on
 max_parallel = 3
 timeout_seconds = 300
 ```
+
+## Chrome extension
+
+The extension puts a PR Sift card on GitHub pull request pages: sift
+the PR without leaving GitHub, see how much is left to read and
+whether the PR moved on since the sift, and open the report next to
+the PR. Chrome starts `pr-sift` itself when the extension needs it,
+through native messaging, so nothing has to be running.
+
+```bash
+pr-sift extension install
+```
+
+Then open `chrome://extensions`, turn on Developer mode, click
+**Load unpacked** and choose the `pr_sift/chrome` folder of this
+checkout (the command prints its path). Chrome, Chromium, Brave, Edge
+and Arc are supported; pass `--browser-dir <user data directory>` for
+another Chromium browser or profile location. Run the install again
+after moving the checkout or changing your `PATH`, since Chrome starts
+`pr-sift` with the `PATH` you had when you installed it.
+
+**Sift this PR** runs the pr-sift skill headless with `claude -p` and
+your Claude Code login: it analyzes and ranks the PR, then the card
+shows **Open report**. The run continues if you close the tab. Only
+github.com for now.
 
 ## Develop
 
