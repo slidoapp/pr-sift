@@ -1,4 +1,4 @@
-"""Command line interface: pr-sift analyze | ingest | serve | status | skill | extension."""
+"""Command line interface: pr-sift analyze | ingest | serve | export | status | skill | extension."""
 
 import argparse
 import json
@@ -11,6 +11,7 @@ from pathlib import Path
 from pr_sift import github, native_host, repo, skills
 from pr_sift.analysis import analyze_revisions, ranking_input, report_data
 from pr_sift.config import ConfigError, load_agent_config
+from pr_sift.export import static_page
 from pr_sift.ranking import to_offsets, validate, validate_walkthrough
 from pr_sift.server import ReportServer
 from pr_sift.store import Store
@@ -41,6 +42,11 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--port", type=int, default=0, help="default: a free port")
     serve.add_argument("--no-open", action="store_true", help="don't open the browser")
 
+    export = commands.add_parser("export", help="write the report of an analyzed PR as one static HTML file")
+    export.add_argument("pr", nargs="?")
+    export.add_argument("--repo")
+    export.add_argument("--out", type=Path, required=True, help="the HTML file to write")
+
     status = commands.add_parser("status", help="list analyzed PRs")
     status.add_argument("pr", nargs="?")
     status.add_argument("--repo")
@@ -60,8 +66,8 @@ def main(argv: list[str] | None = None) -> int:
     host.add_argument("origin", nargs="*", help="passed by Chrome")
 
     args = parser.parse_args(argv)
-    commands = {"analyze": cmd_analyze, "ingest": cmd_ingest, "serve": cmd_serve, "status": cmd_status,
-                "skill": cmd_skill, "extension": cmd_extension}
+    commands = {"analyze": cmd_analyze, "ingest": cmd_ingest, "serve": cmd_serve, "export": cmd_export,
+                "status": cmd_status, "skill": cmd_skill, "extension": cmd_extension}
     try:
         return commands[args.command](args)
     except (github.GitHubError, repo.GitError) as e:
@@ -220,6 +226,18 @@ def cmd_serve(args) -> int:
         pass
     finally:
         server.server_close()
+    return 0
+
+
+def cmd_export(args) -> int:
+    pr = resolve(args.pr, args.repo)
+    store = Store()
+    row = store.pr(repo_key(pr), pr.number)
+    if row is None:
+        print(f"error: {pr} has not been analyzed; run pr-sift analyze first", file=sys.stderr)
+        return 1
+    args.out.write_text(static_page(store, row["id"]))
+    print(f"{pr}: wrote {args.out}", file=sys.stderr)
     return 0
 
 

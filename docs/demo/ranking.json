@@ -1,0 +1,62 @@
+{
+  "overview": "A second `Ctrl-C` while `Command.main()` was printing `Aborted!` or an error used to escape as a traceback, because the message and `sys.exit()` ran inside `except` clauses. Now every handler only records a message and an exit code, and one teardown step reports and exits under an outer handler, so a late interrupt can cost the message but never the exit code.",
+  "architecture_summary": null,
+  "components": [
+    {"name": "`Command.main()`", "behavior": [
+      "A late `KeyboardInterrupt` in standalone mode exits with the code already collected: `1` for aborts, the error's `exit_code`, `0` after success",
+      "Without standalone mode, the late interrupt propagates to the caller instead of becoming `exit 1`",
+      "The first interrupt still reaches non-standalone callers as `Abort` with the interrupt as `__cause__`"
+    ]},
+    {"name": "docs", "behavior": ["`docs/exceptions.md` replaces the numbered list with a table of every way a command ends, and shows how to replace the `Aborted!` message"]}
+  ],
+  "walkthrough": [
+    {"type": "text", "text": "### What and why\n\nIssue [#3802](https://github.com/pallets/click/issues/3802): pressing `Ctrl-C` a second time while Click reports an abort or an error printed a traceback, since the reporting ran in `except` clauses that no `try` covered. The PR applies the policy the pager has had since #351: **a late interrupt must not replace the intended outcome**."},
+    {"type": "text", "text": "### One teardown instead of exits in every handler\n\nEach `except` clause in `Command.main()` now does the same two things: re-raise when `standalone_mode` is off, otherwise set `report` and `exit_code`. The `Exit` handler moves into the inner `try`, which removes one nesting level.\n\nAfter the inner `try`, the teardown calls `report()` and `sys.exit(exit_code)`. The outer `except (EOFError, KeyboardInterrupt)` catches an interrupt that lands there and exits with the code that was already chosen. Check that `exit_code` is set before anything that can be interrupted: it starts at `1`, and success reaches the teardown through `ctx.exit()`, which sets it to `0`."},
+    {"type": "code", "unit": "click.core.Command.main"},
+    {"type": "text", "text": "The `Aborted!` message moves into a small helper, so the two abort paths can store it as `report` without calling it yet."},
+    {"type": "code", "unit": "click.core._echo_aborted"},
+    {"type": "text", "text": "### Tests\n\nThe new tests fake a second interrupt at each point that can be interrupted: `RecordingStderr` raises from its `N`-th `isatty()` call, which `echo()` makes before writing; others patch `ClickException.show()`, `Abort.__init__` or `sys.exit()`."},
+    {"type": "units", "title": "Tests", "units": [
+      "tests.test_abort_interrupt.test_interrupt_while_reporting_abort",
+      "tests.test_abort_interrupt.test_interrupt_while_reporting_error",
+      "tests.test_abort_interrupt.test_late_interrupt_with_disabled_standalone_mode",
+      "tests.test_abort_interrupt.test_interrupt_while_exiting_after_success",
+      "tests.test_abort_interrupt.RecordingStderr.isatty",
+      "tests.test_abort_interrupt._exit_code"
+    ]},
+    {"type": "units", "title": "Docs", "units": ["docs/exceptions.md", "CHANGES.md"]},
+    {"type": "text", "text": "### Before merging\n\n- After success, a late interrupt now exits `0` instead of printing a traceback; the PR asks maintainers to confirm this policy.\n- The PR description mentions stress tests with real `SIGINT`s and random delays; the diff only has the monkeypatched tests."}
+  ],
+  "units": [
+    {"fingerprint": "f48bf39bee1af9e102702dbe40747979082a68b0cd8cf48e4e321485730f13a7", "tier": "behavior", "reason": "changes how every abort, error and exit leaves `main()` and what a late interrupt does", "summary": "Handlers collect `report` and `exit_code`; one teardown reports and exits, guarded against a late `KeyboardInterrupt`", "description": null, "attention": "read",
+     "highlights": [
+       {"line": 1561, "note": "default exit code `1`: what a late interrupt exits with if no handler set one"},
+       {"line": 1589, "note": "`Exit` no longer exits here; success depends on reaching the teardown with this code"},
+       {"line": 1623, "note": "late interrupt exits with the collected code; the message may be lost"}
+     ],
+     "sections": [
+       {"line": 1560, "title": "Collected outcome: message and exit code"},
+       {"line": 1577, "title": "Each handler re-raises or records the outcome"},
+       {"line": 1615, "title": "Teardown: report, then exit"},
+       {"line": 1619, "title": "A late interrupt keeps the collected exit code"}
+     ]},
+    {"fingerprint": "8f3b716f4dc0d556495d57ae3da0b137be057ffc1bd81a3d3f9bfb3421e1ad9f", "tier": "detail", "reason": "extracted message, same text and stream", "summary": "Writes `Aborted!` to stderr, so handlers can defer it", "description": null, "attention": "skim", "highlights": [], "sections": []},
+    {"fingerprint": "4dc97e6d62a843558358126c4a0da541e9e35095d6b4e1de6715321886013d2e", "tier": "detail", "reason": "changelog entry", "summary": "Changelog entry for #3802", "description": null, "attention": "skim", "highlights": [], "sections": []},
+    {"fingerprint": "f6078568bf1b323612ac3a2f3facf9056e28a92011136151339ce386c1d8dabe", "tier": "detail", "reason": "documentation of existing and new behavior", "summary": "Table of every way a command ends, in and out of standalone mode; how to replace `Aborted!`", "description": null, "attention": "skim", "highlights": [], "sections": []},
+    {"fingerprint": "2efce3e9fb15dd4b481d21e013fe1d2d8ba5fa0d93c4b3f9599cf4cbfc7635e8", "tier": "detail", "reason": "test module docstring", "summary": "Explains the bug and the policy the tests hold", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "21c2eaed9335c77b87f7c0704b8c36a9d57c3fa37c12274c4937d8659597c172", "tier": "detail", "reason": "test imports", "summary": "Imports for the new test module", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "45d79f7b6b8d5f74832f3099653cb2459532522cb4e44e35a7555da9cdbf07e4", "tier": "detail", "reason": "test helper", "summary": "Stderr stand-in that records writes and can interrupt on a chosen `isatty()` call", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "1d2daa0a6cd9eea313d551adab4d8bf85c85e2aacfbc37702045111f2a19763a", "tier": "detail", "reason": "test helper", "summary": "Stores the interrupt position", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "69ceee868240f6464156ad3082e9058a0a516e7aef70a18fe3a213f1c4140b2e", "tier": "detail", "reason": "test helper; decides where the fake interrupt lands", "summary": "Raises `KeyboardInterrupt` on the `interrupt_at`-th call", "description": null, "attention": "skim", "highlights": [], "sections": []},
+    {"fingerprint": "e3c4597d6b44d8cdf6b7be1ad5a18e15d2d393596568fc815c397b17ee01d655", "tier": "detail", "reason": "test helper", "summary": "Records written text", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "0538c474b332c7cc71eab48b514e4bb3971d12ce71e8d35d8e349140b9f71c41", "tier": "detail", "reason": "test helper", "summary": "No-op flush", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "fb80d2f354f12d46f1fba2f7df38eec288540bbf719773bef2cfd0c72d1b663b", "tier": "detail", "reason": "test helper", "summary": "Fake `input()` that raises `KeyboardInterrupt`", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "c3c6b6d29ed06badcb1d640928a3b1e0def6625b6b105e27d57d804a3fd248d0", "tier": "detail", "reason": "test fixture", "summary": "Command with a prompted option", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "cdfef2bfce54e24d45c9996bacdf96c8eb7fc6a002356f241c20545dbbe3c334", "tier": "detail", "reason": "test fixture", "summary": "Command whose body raises `KeyboardInterrupt`", "description": null, "attention": "hide", "highlights": [], "sections": []},
+    {"fingerprint": "8ff42942686e991adebbf067f74794e894c0cf97a70859959e832e6199e4bdd0", "tier": "detail", "reason": "test helper", "summary": "Runs `main()` standalone and fails the test if an interrupt escapes", "description": null, "attention": "skim", "highlights": [], "sections": []},
+    {"fingerprint": "e42e9002f5e18754a239a2b3a299bc5ae0941039c18c9cf4c45853f956141aa7", "tier": "detail", "reason": "new coverage for the fix", "summary": "Exit code `1` survives an interrupt at each write while aborting", "description": null, "attention": "skim", "highlights": [], "sections": []},
+    {"fingerprint": "83b5f55a5000f1c300c7be2bdd640f1ecca338e954c7c5bbba2fe7eaabcbd1a4", "tier": "detail", "reason": "new coverage for the fix", "summary": "Interrupt inside `show()` keeps the error's exit code `3`", "description": null, "attention": "skim", "highlights": [], "sections": []},
+    {"fingerprint": "fa3a21312a8bb3faafd5e854b595c7ceb8b00a880e50cfe0f25ea8ee03ba7b99", "tier": "detail", "reason": "new coverage for the fix", "summary": "Non-standalone callers get the late `KeyboardInterrupt`", "description": null, "attention": "skim", "highlights": [], "sections": []},
+    {"fingerprint": "9ffa25ba78320e15d0a9d6fd7c565849842f6f4d2a7198d5fb0a52b3401ed8f3", "tier": "detail", "reason": "test pins a new behavior: exit `0` after a late interrupt", "summary": "Interrupt during `sys.exit(0)` still exits `0`", "description": null, "attention": "skim", "highlights": [], "sections": []}
+  ]
+}

@@ -1,6 +1,10 @@
 // The report page: renders /api/pr and keeps review state in sync.
 
 const TOKEN = document.querySelector('meta[name="pr-sift-token"]').content;
+// A static copy of the report (pr-sift export) carries its data and has
+// no server behind it.
+const STATIC_DATA = document.getElementById("pr-sift-data");
+const STATIC_NOTE = "This is a static copy of the report: run pr-sift serve to comment or ask Claude";
 
 const TIERS = [
   { key: "architecture", label: "Architecture", desc: "Structure and dependencies between components" },
@@ -157,6 +161,7 @@ function savePrefs() {
 }
 
 async function api(method, path, body) {
+  if (STATIC_DATA) return staticApi(method, path, body);
   const response = await fetch(path, {
     method,
     headers: { "X-PR-Sift-Token": TOKEN, "Content-Type": "application/json" },
@@ -165,6 +170,19 @@ async function api(method, path, body) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `${response.status} ${response.statusText}`);
   return payload;
+}
+
+// Review marks of a static copy last as long as the page.
+function staticApi(method, path, body) {
+  if (method === "GET" && path === "/api/pr") return JSON.parse(STATIC_DATA.textContent);
+  const review = method === "PUT" && path.match(/^\/api\/units\/(.+)\/review$/);
+  if (!review) throw new Error(STATIC_NOTE);
+  const unit = data.units.find((u) => u.qualname === decodeURIComponent(review[1]));
+  return {
+    ...unit,
+    state: body.reviewed === undefined ? unit.state : body.reviewed ? "seen" : "new",
+    flagged: body.flagged ?? unit.flagged,
+  };
 }
 
 let toastTimer;
@@ -1169,7 +1187,7 @@ function foldView(fold, key, notes) {
 // "place" names that spot: "qualname|side:line" for the line a thread
 // ends on, "qualname|unit", "wt|block" or "pr".
 
-const agentMissing = () => `${data.agent.command} isn't on PATH, so questions can't be asked`;
+const agentMissing = () => (data.static ? STATIC_NOTE : `${data.agent.command} isn't on PATH, so questions can't be asked`);
 
 function placeOf(anchor) {
   if (anchor.state === "orphaned") return "orphaned";
@@ -1286,6 +1304,7 @@ function lineClicked(qualname, side, line, extend, surface) {
 }
 
 function openComposer(anchor, mode, surface = ui.tab === "walkthrough" ? "story" : "changes", text = null) {
+  if (data.static) return toast(STATIC_NOTE);
   if (anchor.kind === "walkthrough") mode = "ask";
   if (mode === "ask" && !data.agent.available) {
     if (anchor.kind === "walkthrough") return toast(agentMissing());

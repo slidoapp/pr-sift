@@ -9,6 +9,11 @@ for now.
 
 ![The walkthrough of a pallets/click pull request: what and why, then the changed code with section titles and highlighted lines](docs/images/walkthrough.png)
 
+[Open the demo](docs/demo/index.html): the report of that pull request,
+[pallets/click#3818](https://github.com/pallets/click/pull/3818), as a
+static page. Review marks there last until you close it, and asking
+Claude and drafting comments need `pr-sift serve`.
+
 See [docs/design.md](docs/design.md) for how it works.
 
 ## Install
@@ -59,6 +64,7 @@ Or run the analysis yourself, with the same ways to name the PR:
 ```bash
 pr-sift analyze 123 --out analysis.json   # or owner/repo#123, or a PR URL
 pr-sift serve 123                         # open the report in the browser
+pr-sift export 123 --out report.html      # or save it as one static page
 pr-sift status
 pr-sift extension install                 # connect the Chrome extension
 ```
@@ -126,6 +132,14 @@ editable mode, so changes take effect without reinstalling:
 ```bash
 uv tool install --editable . --force
 pr-sift skill install
+```
+
+To rebuild the demo after changing the report page:
+
+```bash
+pr-sift analyze 3818 --repo pallets/click --out /dev/null
+pr-sift ingest 3818 docs/demo/ranking.json --repo pallets/click
+pr-sift export 3818 --repo pallets/click --out docs/demo/index.html
 ```
 
 ## License

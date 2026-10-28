@@ -369,6 +369,12 @@ page itself rather than diff2html, so lines can be made commentable.
 Served by `pr-sift serve` on `127.0.0.1` with a random port; the
 command opens the browser. Light and dark themes follow the system.
 
+`pr-sift export` writes the same page as one HTML file, with its data
+and assets inline, that opens without a server (`pr_sift/export.py`).
+It leaves out the reviewer's own state: review marks, drafts,
+questions and posted reviews. There the page marks units reviewed and
+flagged in memory only, and comments and questions are turned off.
+
 ```
 ┌ PR #123  Add retry policy to HTTP client      ● 3 new since your last review ┐
 │ [Overview] [Architecture] [Interfaces] [Changes]  ▓▓▓▓▒▒░░ 38% ✓ · 12% hidden │
@@ -712,6 +718,7 @@ origins in the manifest.
 pr-sift analyze <pr> [--repo owner/name] [--out analysis.json]
 pr-sift ingest  <pr> <ranking.json>
 pr-sift serve   <pr> [--no-open] [--port N]
+pr-sift export  <pr> --out report.html   # the report as one static page
 pr-sift status  [<pr>]          # PRs known locally, review progress
 pr-sift skill install           # link the skill for Claude Code and Codex
 pr-sift extension install [--browser-dir DIR]   # let Chrome start pr-sift
