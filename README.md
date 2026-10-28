@@ -41,13 +41,20 @@ through loading the Chrome extension from the folder it prints.
 
 ## Use
 
-In Claude Code, inside any checkout of the repository:
+In Claude Code, from any directory:
 
 ```
-/pr-sift 123
+/pr-sift https://github.com/owner/repo/pull/123
+/pr-sift owner/repo#123
 ```
 
-Or run the analysis yourself:
+Or ask in your own words, like "review pallets/click#3818". You
+don't need the code checked out: pr-sift keeps its own clone of each
+repository it reviews. Inside a checkout of the repository,
+`/pr-sift 123` takes the repository from its remote, and `/pr-sift`
+alone reviews the PR of the current branch.
+
+Or run the analysis yourself, with the same ways to name the PR:
 
 ```bash
 pr-sift analyze 123 --out analysis.json   # or owner/repo#123, or a PR URL
