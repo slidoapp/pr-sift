@@ -7,6 +7,8 @@ the report you can ask Claude about any line, unit or paragraph, draft
 comments, and post them as a GitHub review. Python repositories only,
 for now.
 
+![The walkthrough of a pallets/click pull request: what and why, then the changed code with section titles and highlighted lines](docs/images/walkthrough.png)
+
 See [docs/design.md](docs/design.md) for how it works.
 
 ## Install
