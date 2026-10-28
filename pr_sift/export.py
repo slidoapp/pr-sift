@@ -51,6 +51,9 @@ def static_page(store: Store, pr_id: int) -> str:
 
 def _inline(text: str) -> str:
     """Text safe to put inside a <style> or <script> element. In the
-    scripts "</script" only appears in strings and regular expressions,
-    where "<\\/" means the same."""
+    scripts "<script" and "</script" only appear in strings and regular
+    expressions, where "\\x3c" and "<\\/" mean the same. Escaping the
+    opening tag too keeps pages that rewrite the HTML, like
+    htmlpreview.github.io, from splitting a script in two."""
+    text = re.sub(r"<(script)", r"\\x3c\1", text, flags=re.IGNORECASE)
     return re.sub(r"</(script|style)", r"<\\/\1", text, flags=re.IGNORECASE)

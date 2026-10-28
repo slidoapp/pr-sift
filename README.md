@@ -9,7 +9,7 @@ for now.
 
 ![The walkthrough of a pallets/click pull request: what and why, then the changed code with section titles and highlighted lines](docs/images/walkthrough.png)
 
-[Open the demo](docs/demo/index.html): the report of that pull request,
+[Open the demo](https://htmlpreview.github.io/?https://github.com/slidoapp/pr-sift/blob/main/docs/demo/index.html): the report of that pull request,
 [pallets/click#3818](https://github.com/pallets/click/pull/3818), as a
 static page. Review marks there last until you close it, and asking
 Claude and drafting comments need `pr-sift serve`.

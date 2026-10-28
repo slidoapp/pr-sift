@@ -27,8 +27,9 @@ def test_the_page_carries_its_data_and_assets():
 
     assert "/static/" not in page
     assert "__TOKEN__" not in page
-    # One closing tag per script element: the inlined code and data can't end one early.
-    assert page.count("</script>") == len(re.findall(r"<script[ >]", page))
+    # One opening and one closing tag per script element: the inlined code
+    # and data can't end one early or look like another.
+    assert page.count("</script>") == page.count("<script") == len(re.findall(r"<script[ >]", page)) == 4
     # At the end of the head, though mermaid's code holds a "</head>" too.
     assert re.search(r'id="pr-sift-data">[^<]*</script>\n</head>\n<body>', page)
     data = embedded(page)
