@@ -1,4 +1,4 @@
-"""Command line interface: pr-sift analyze | ingest | serve | status | extension."""
+"""Command line interface: pr-sift analyze | ingest | serve | status | skill | extension."""
 
 import argparse
 import json
@@ -8,7 +8,7 @@ import webbrowser
 from collections import Counter
 from pathlib import Path
 
-from pr_sift import github, native_host, repo
+from pr_sift import github, native_host, repo, skills
 from pr_sift.analysis import analyze_revisions, ranking_input, report_data
 from pr_sift.config import ConfigError, load_agent_config
 from pr_sift.ranking import to_offsets, validate, validate_walkthrough
@@ -45,6 +45,10 @@ def main(argv: list[str] | None = None) -> int:
     status.add_argument("pr", nargs="?")
     status.add_argument("--repo")
 
+    skill = commands.add_parser("skill", help="install the pr-sift skill for coding agents")
+    skill_commands = skill.add_subparsers(dest="skill_command", required=True)
+    skill_commands.add_parser("install", help="link the skill into ~/.agents/skills and each agent's skills folder")
+
     extension = commands.add_parser("extension", help="connect the Chrome extension to pr-sift")
     extension_commands = extension.add_subparsers(dest="extension_command", required=True)
     install = extension_commands.add_parser("install", help="let Chrome start pr-sift for the extension")
@@ -57,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     commands = {"analyze": cmd_analyze, "ingest": cmd_ingest, "serve": cmd_serve, "status": cmd_status,
-                "extension": cmd_extension}
+                "skill": cmd_skill, "extension": cmd_extension}
     try:
         return commands[args.command](args)
     except (github.GitHubError, repo.GitError) as e:
@@ -242,6 +246,17 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_skill(args) -> int:
+    try:
+        links = skills.install()
+    except skills.SkillError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"Installed the {skills.NAME} skill from {skills.SKILL_DIR}:")
+    print(*(f"  {path}" for path in links), sep="\n")
+    return 0
+
+
 def cmd_extension(args) -> int:
     if args.extension_command == "host":
         return native_host.run()
@@ -254,7 +269,7 @@ def cmd_extension(args) -> int:
     print(
         "\nTo load the extension, open chrome://extensions, turn on Developer mode,"
         f"\nclick Load unpacked and choose {native_host.EXTENSION_DIR}"
-        "\nRun this again after moving the pr-sift checkout or changing PATH."
+        "\nRun this again after reinstalling pr-sift or changing PATH."
     )
     return 0
 

@@ -14,8 +14,8 @@ that is left and summarize the PR.
 ## Prerequisites
 
 `pr-sift`, `gh` and `git` must be on PATH, and `gh` must be logged in.
-If `pr-sift` is missing, tell the user to install it from the
-pr-sift checkout with `uv tool install --editable <path>` and stop.
+If `pr-sift` is missing, tell the user to install it with
+`uv tool install git+https://github.com/slidoapp/pr-sift` and stop.
 
 ## Steps
 

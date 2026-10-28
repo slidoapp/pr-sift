@@ -713,6 +713,7 @@ pr-sift analyze <pr> [--repo owner/name] [--out analysis.json]
 pr-sift ingest  <pr> <ranking.json>
 pr-sift serve   <pr> [--no-open] [--port N]
 pr-sift status  [<pr>]          # PRs known locally, review progress
+pr-sift skill install           # link the skill for Claude Code and Codex
 pr-sift extension install [--browser-dir DIR]   # let Chrome start pr-sift
 pr-sift extension host          # what Chrome runs for the extension
 ```
@@ -723,7 +724,8 @@ host configuration.
 
 ## Skill
 
-`skills/pr-sift/SKILL.md`:
+`pr_sift/skill/SKILL.md`, shipped in the package and linked into each
+agent's skills folder by `pr-sift skill install`:
 
 1. Resolve the PR from the argument or the current branch.
 2. Run `pr-sift analyze <pr> --out <scratch>/analysis.json`.
@@ -741,7 +743,7 @@ For very large PRs, the skill ranks units in batches by package.
 
 ```
 pr_sift/
-  cli.py            # analyze | ingest | serve | status | extension
+  cli.py            # analyze | ingest | serve | status | skill | extension
   github.py         # gh wrappers: PR metadata, cloning, post review
   repo.py           # cached bare clones, worktrees, reading files at a SHA
   units.py          # ast → symbol units, normalization, fingerprints
@@ -755,9 +757,10 @@ pr_sift/
   agent.py          # runs the agent for questions, parses its stream
   config.py         # ~/.config/pr-sift/config.toml
   native_host.py    # the Chrome extension's native messaging host, sifting
+  skills.py         # links the skill into each agent's skills folder
   web/              # index.html, app.js, styles.css, vendor/
   chrome/           # the Chrome extension: manifest, background, content script
-skills/pr-sift/SKILL.md
+  skill/SKILL.md    # the /pr-sift skill
 tests/
 docs/design.md
 ```

@@ -17,21 +17,27 @@ Requires Python 3.12+, [uv](https://docs.astral.sh/uv/), `git`, and
 the GitHub CLI `gh`, logged in.
 
 ```bash
-uv tool install --editable .
+uv tool install git+https://github.com/slidoapp/pr-sift
+pr-sift skill install
 ```
 
-Skills live in `~/.agents/skills`, with a link per skill from each
-agent's skills folder:
+The second command links the `/pr-sift` skill, which comes with the
+package, into `~/.agents/skills`, and from there into
+`~/.claude/skills` and `~/.codex/skills` if you use Claude Code or
+Codex. `uv tool upgrade pr-sift` upgrades the command and the skill
+together.
 
-```bash
-mkdir -p ~/.agents/skills ~/.claude/skills ~/.codex/skills
-ln -s "$PWD/skills/pr-sift" ~/.agents/skills/pr-sift
-ln -s ../../.agents/skills/pr-sift ~/.claude/skills/pr-sift
-ln -s ../../.agents/skills/pr-sift ~/.codex/skills/pr-sift
+Or paste this to your agent:
+
+```text
+Install PR Sift (https://github.com/slidoapp/pr-sift) for me. Check
+that uv, git and the GitHub CLI gh are installed and that gh is logged
+in, and tell me how to fix anything missing. Then run
+`uv tool install git+https://github.com/slidoapp/pr-sift` and
+`pr-sift skill install`, and tell me what was installed. If I use a
+Chromium browser, also run `pr-sift extension install` and walk me
+through loading the Chrome extension from the folder it prints.
 ```
-
-Both installs point at this checkout, so changes here take effect
-without reinstalling.
 
 ## Use
 
@@ -87,12 +93,13 @@ pr-sift extension install
 ```
 
 Then open `chrome://extensions`, turn on Developer mode, click
-**Load unpacked** and choose the `pr_sift/chrome` folder of this
-checkout (the command prints its path). Chrome, Chromium, Brave, Edge
-and Arc are supported; pass `--browser-dir <user data directory>` for
-another Chromium browser or profile location. Run the install again
-after moving the checkout or changing your `PATH`, since Chrome starts
-`pr-sift` with the `PATH` you had when you installed it.
+**Load unpacked** and choose the folder the command prints: the
+extension inside the installed package. After upgrading pr-sift,
+click the extension's reload button there. Chrome, Chromium, Brave,
+Edge and Arc are supported; pass `--browser-dir <user data directory>`
+for another Chromium browser or profile location. Run the install
+again after reinstalling pr-sift or changing your `PATH`, since Chrome
+starts `pr-sift` with the `PATH` you had when you installed it.
 
 **Sift this PR** runs the pr-sift skill headless with `claude -p` and
 your Claude Code login: it analyzes and ranks the PR, then the card
@@ -104,6 +111,14 @@ github.com for now.
 ```bash
 uv sync
 uv run pytest
+```
+
+To run pr-sift and the skill from your checkout, install it in
+editable mode, so changes take effect without reinstalling:
+
+```bash
+uv tool install --editable . --force
+pr-sift skill install
 ```
 
 ## License
